@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -23,9 +26,6 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install dependencies & verify tests + web build
         run: |
           npm install
@@ -33,9 +33,9 @@ jobs:
           npm test
           npm run build
 
-      - name: Add Capacitor Android & lock landscape fullscreen
+      - name: Add Capacitor 7 Android & lock landscape fullscreen
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
           npx cap add android
           npx cap sync android
           python3 -c '
@@ -62,3 +62,13 @@ jobs:
           name: mod-knight-android-apk
           path: mod-knight-debug.apk
           retention-days: 90
+
+      - name: Publish Direct Download Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest-apk --yes || true
+          git push origin :refs/tags/latest-apk || true
+          gh release create latest-apk mod-knight-debug.apk \
+            --title "魔改骑士 (Mod Knight) 安卓测试版 APK" \
+            --notes "自动构建的最新安卓可安装 APK（横屏全屏版），直接点击下方 mod-knight-debug.apk 即可下载安装！"
