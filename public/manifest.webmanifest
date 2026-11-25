@@ -1,0 +1,10 @@
+{
+  "name": "魔改骑士 (Mod Knight)",
+  "short_name": "魔改骑士",
+  "description": "复古像素奇幻地牢 Roguelike：脑洞武器 × 自由贴纸魔改 × 高密度奇遇房",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#14111b",
+  "theme_color": "#14111b"
+}

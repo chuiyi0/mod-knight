@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#14111b" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <title>魔改骑士 · Mod Knight</title>
+</head>
+<body>
+  <div id="app">
+    <canvas id="game-canvas"></canvas>
+    <div id="hud-root"></div>
+    <div id="touch-root"></div>
+    <div id="modal-root"></div>
+    <div id="rotate-hint" class="rotate-hint hidden">
+      <div class="rotate-card">
+        <div class="rotate-icon">📱↻</div>
+        <div class="rotate-title">请横屏游玩《魔改骑士》</div>
+        <div class="rotate-sub">横屏左手摇杆 + 右手三键手感最棒！（也可以点击继续竖屏凑合玩）</div>
+        <button id="btn-dismiss-rotate" class="px-btn">继续游玩</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,368 @@
+:root {
+  --bg: #110e18;
+  --panel: rgba(22, 18, 34, 0.94);
+  --border: #5c4f7d;
+  --gold: #ffd54f;
+  --accent: #4fc3f7;
+  --danger: #ff5277;
+  --ok: #69f0ae;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+}
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: #f3f5fa;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+#hud-root, #touch-root, #modal-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Safe-area Top HUD */
+.hud-top {
+  position: absolute;
+  top: max(8px, env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
+  right: max(10px, env(safe-area-inset-right));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.hud-stats {
+  background: rgba(16, 13, 26, 0.8);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-width: 180px;
+  pointer-events: auto;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.bar-track {
+  flex: 1;
+  height: 8px;
+  background: #231d33;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bar-fill { height: 100%; transition: width 0.12s ease; }
+.bar-hp { background: #ff5252; }
+.bar-shield { background: #4fc3f7; }
+.bar-mana { background: #536dfe; }
+
+.hud-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.hud-right {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.floor-badge {
+  background: rgba(16, 13, 26, 0.86);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.minimap-box {
+  background: rgba(12, 10, 20, 0.88);
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.px-btn {
+  pointer-events: auto;
+  background: #2c2444;
+  color: #fff;
+  border: 2px solid #7d6ca8;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.08s, background 0.1s;
+}
+.px-btn:active { transform: scale(0.95); }
+.px-btn.primary { background: #4c3582; border-color: var(--gold); color: var(--gold); }
+.px-btn.ok { background: #1e5938; border-color: var(--ok); color: #d8ffea; }
+.px-btn.danger { background: #6b1d2f; border-color: var(--danger); }
+.px-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Boss HP Bar */
+.boss-bar-wrap {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(360px, 46vw);
+  background: rgba(16, 10, 22, 0.9);
+  border: 2px solid var(--danger);
+  border-radius: 8px;
+  padding: 5px 10px;
+  text-align: center;
+}
+.boss-bar-title { font-size: 12px; font-weight: 800; color: var(--gold); margin-bottom: 3px; }
+
+/* Weapon Strip Bottom Center */
+.weapon-strip {
+  position: absolute;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.weapon-pill {
+  background: rgba(16, 13, 26, 0.88);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  min-width: 120px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.weapon-pill.active { border-color: var(--gold); box-shadow: 0 0 10px rgba(255,213,79,0.3); }
+.sticker-tags { display: flex; gap: 3px; margin-top: 3px; flex-wrap: wrap; }
+.sticker-chip {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: #110e18;
+}
+
+/* Lobby Quick Warp Bar */
+.lobby-shortcuts {
+  position: absolute;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 92vw;
+  pointer-events: auto;
+}
+
+/* Toast Feed */
+.toast-feed {
+  position: absolute;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 30;
+}
+.toast-item {
+  background: rgba(14, 11, 24, 0.92);
+  border: 1.5px solid var(--gold);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Touch Controls: Left Floating Joystick + Right Classic 3 Buttons */
+.touch-zone-left {
+  position: absolute;
+  left: 0;
+  top: 72px;
+  bottom: 0;
+  width: 48%;
+  pointer-events: auto;
+}
+.joy-base {
+  position: fixed;
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.joy-base.visible { opacity: 1; }
+.joy-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 213, 79, 0.72);
+  border: 2px solid #fff;
+  transform: translate(-50%, -50%);
+}
+
+.touch-right-cluster {
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  width: 180px;
+  height: 170px;
+  pointer-events: none;
+}
+
+.act-btn {
+  position: absolute;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255,255,255,0.75);
+  background: rgba(24, 19, 40, 0.72);
+  color: #fff;
+  font-weight: 800;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+}
+.act-btn:active, .act-btn.pressed {
+  transform: scale(0.92);
+  background: rgba(255, 213, 79, 0.32);
+}
+.btn-fire {
+  right: 0;
+  bottom: 0;
+  width: 82px;
+  height: 82px;
+  font-size: 24px;
+  border-color: var(--gold);
+}
+.btn-skill {
+  right: 96px;
+  bottom: 12px;
+  width: 62px;
+  height: 62px;
+  font-size: 18px;
+  border-color: var(--accent);
+}
+.btn-switch {
+  right: 12px;
+  bottom: 96px;
+  width: 58px;
+  height: 58px;
+  font-size: 16px;
+  border-color: #c77dff;
+}
+.btn-sub-label { font-size: 10px; opacity: 0.9; margin-top: 1px; }
+
+/* Modals */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 6, 15, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  pointer-events: auto;
+  z-index: 50;
+}
+.modal-card {
+  background: var(--panel);
+  border: 2.5px solid var(--gold);
+  border-radius: 12px;
+  width: min(680px, 95vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 16px;
+  touch-action: pan-y;
+}
+.modal-card * { touch-action: pan-y; }
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1.5px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+.modal-title { font-size: 17px; font-weight: 800; color: var(--gold); }
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+  gap: 10px;
+}
+.item-card {
+  background: rgba(34, 28, 54, 0.9);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.item-card.gold-frame { border-color: var(--gold); box-shadow: inset 0 0 12px rgba(255,213,79,0.22); }
+.item-card-title { font-size: 13px; font-weight: 800; }
+.item-card-desc { font-size: 11px; color: #cfd8dc; line-height: 1.4; flex: 1; }
+
+.rotate-hint {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 10, 20, 0.96);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rotate-hint.hidden { display: none; }
+.rotate-card { text-align: center; padding: 24px; max-width: 320px; }
+.rotate-icon { font-size: 46px; margin-bottom: 8px; }
+.rotate-title { font-size: 18px; font-weight: 800; color: var(--gold); margin-bottom: 8px; }
+.rotate-sub { font-size: 13px; color: #b0bec5; margin-bottom: 16px; }
