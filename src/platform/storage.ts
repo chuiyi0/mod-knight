@@ -88,7 +88,21 @@ export function createDefaultMetaSave(): MetaSave {
     settings: {
       sfxEnabled: true,
       bgmEnabled: true,
-      shakeEnabled: true
+      shakeEnabled: true,
+      buttonScale: 1.0,
+      swapHands: false,
+      touchOffsets: {
+        fire: { x: 0, y: 0 },
+        skill: { x: 0, y: 0 },
+        switch: { x: 0, y: 0 }
+      },
+      keyBindings: {
+        fire: 'j',
+        interact: 'f',
+        skill: 'k',
+        switch: 'q',
+        bag: 'tab'
+      }
     }
   };
 }
@@ -115,7 +129,18 @@ export function loadMetaSave(): MetaSave {
       heroLevels: { ...def.heroLevels, ...(parsed.heroLevels ?? {}) },
       materials: { ...def.materials, ...(parsed.materials ?? {}) },
       seeds: { ...def.seeds, ...(parsed.seeds ?? {}) },
-      settings: { ...def.settings, ...(parsed.settings ?? {}) }
+      settings: {
+        ...def.settings,
+        ...(parsed.settings ?? {}),
+        touchOffsets: {
+          ...def.settings.touchOffsets,
+          ...(parsed.settings?.touchOffsets ?? {})
+        },
+        keyBindings: {
+          ...def.settings.keyBindings,
+          ...(parsed.settings?.keyBindings ?? {})
+        }
+      }
     };
     // Reset daily counters when date changes
     const today = todayDateString();

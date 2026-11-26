@@ -2,6 +2,7 @@ export const TILE_SIZE = 16;
 export const SIM_DT = 1 / 60;
 export const MAX_PLAYER_PROJECTILES = 180;
 export const MAX_SUMMONS = 16;
+export const MAX_WEAPON_VAULT = 6;
 export const SHIELD_REGEN_DELAY = 3.5;
 export const SHIELD_REGEN_INTERVAL = 0.85;
 
@@ -28,7 +29,6 @@ export type WeaponCategory = 'melee' | 'gun' | 'staff' | 'bow' | 'quirk' | 'boss
 export type ElementTag = 'fire' | 'ice' | 'lightning' | 'poison';
 
 export type WeaponId =
-  // Melee (7)
   | 'salted_fish'
   | 'bug_zapper'
   | 'sword_40m'
@@ -36,7 +36,6 @@ export type WeaponId =
   | 'plunger_spear'
   | 'twin_lightsaber'
   | 'golden_pan'
-  // Guns (8)
   | 'worn_pistol'
   | 'goblin_gatling'
   | 'pixel_shotgun'
@@ -45,25 +44,21 @@ export type WeaponId =
   | 'dwarf_sniper'
   | 'ramen_launcher'
   | 'twin_flamethrower'
-  // Staves (6)
   | 'thunder_staff'
   | 'meteor_tome'
   | 'slime_staff'
   | 'keyboard_bible'
   | 'frost_prism'
   | 'blackhole_vacuum'
-  // Bows/Charge (4)
   | 'slingshot'
   | 'hero_multibow'
   | 'solar_cannon'
   | 'boomerang_blade'
-  // Quirks (5)
   | 'rubber_chicken'
   | 'carrot_gatling'
   | 'magic_hat'
   | 'takeout_box'
   | 'one_punch_glove'
-  // Boss & Secret Red Weapons (7 -> 6 world bosses + 1 goose secret)
   | 'goblin_totem'
   | 'yeti_frostfist'
   | 'skull_trumpet'
@@ -73,28 +68,24 @@ export type WeaponId =
   | 'goose_bill_cannon';
 
 export type StickerId =
-  // Trajectory (6)
   | 'homing'
   | 'triple_split'
   | 'laserize'
   | 'bounce'
   | 'giant'
   | 'boomerang_return'
-  // Element (6)
   | 'fire_pepper'
   | 'subzero'
   | 'volt_chain'
   | 'snail_poison'
   | 'nuclear_nuke'
   | 'ice_fire_duo'
-  // Stat / Trigger (6)
   | 'rapid_fire'
   | 'eco_mana'
   | 'reflect_armor'
   | 'crit_overdrive'
   | 'vampire_mosquito'
   | 'kill_chain'
-  // Meme (6)
   | 'egg_chicken'
   | 'duck_curse'
   | 'coin_shower'
@@ -171,11 +162,21 @@ export type DailyFactorId =
 export type RoomKind =
   | 'start'
   | 'combat'
+  | 'shop'
   | 'chest'
   | 'curiosity'
+  | 'bounty'
   | 'secret'
   | 'portal'
   | 'boss';
+
+export type ZoneFlavor = 'normal' | 'treasure' | 'market' | 'boss_lair';
+
+export interface PortalDestination {
+  biome: BiomeId;
+  flavor: ZoneFlavor;
+  label: string;
+}
 
 export type CuriosityKind =
   | 'sticker_workshop'
@@ -307,7 +308,7 @@ export interface HeroDef {
   skillDesc: string;
   skillCooldown: number;
   passiveDesc: string;
-  unlockCost: number; // 0 free, -1 unlock via clear 3-5
+  unlockCost: number;
   color: string;
   accentColor: string;
   lobbyLine: string;
@@ -316,7 +317,7 @@ export interface HeroDef {
 export interface PetDef {
   id: PetId;
   name: string;
-  unlockCost: number; // -1 boss, -2 stickers
+  unlockCost: number;
   unlockHint: string;
   desc: string;
   color: string;
@@ -349,6 +350,10 @@ export interface PlayerState {
   seedsEarned: Partial<Record<PlantId, number>>;
   weapons: WeaponInstance[];
   activeWeaponIndex: number;
+  /** Up to 6 spare weapons stored in bag for swapping or batch recycling */
+  weaponVault: WeaponInstance[];
+  /** Auto-collected stickers waiting in bag to be attached/swapped anytime */
+  stickerBag: StickerId[];
   attackCooldown: number;
   skillCooldown: number;
   skillMaxCooldown: number;
@@ -357,6 +362,7 @@ export interface PlayerState {
   dualWieldTimer: number;
   guaranteedCritTimer: number;
   berserkStatueTimer: number;
+  campfireBuffTimer: number;
   paladinBarrier: boolean;
   statueId: StatueId | null;
   invulnTimer: number;
@@ -455,39 +461,32 @@ export interface BlackHoleZone {
 }
 
 export type EnemyKind =
-  // World 1 - Goblin Ruins
   | 'goblin_spear'
   | 'goblin_dart'
   | 'goblin_bomber'
   | 'goblin_shaman'
   | 'boar_rider'
-  // World 1 - Frost Castle
   | 'snowman_roller'
   | 'ice_miner'
   | 'blizzard_sprite'
   | 'frost_troll'
-  // World 2 - Skeleton Crypt
   | 'skeleton_shield'
   | 'skeleton_archer'
   | 'skeleton_mage'
   | 'boom_skull'
   | 'headless_knight'
-  // World 2 - Alchemy Factory
   | 'clockwork_gunner'
   | 'alchemy_turret'
   | 'goblin_chemist'
   | 'spring_boxer'
-  // World 3 - Volcano Palace
   | 'lava_slime_king'
   | 'obsidian_knight'
   | 'baby_drake'
   | 'inferno_warlock'
-  // World 3 - Astral Void
   | 'astral_eye'
   | 'void_tentacle'
   | 'glitch_ghost'
   | 'ufo_elite'
-  // Special / Curiosity
   | 'angry_frog'
   | 'mimic_chest_boss'
   | 'armed_merchant'
@@ -519,6 +518,9 @@ export interface EnemyState {
   speed: number;
   isElite: boolean;
   isBoss: boolean;
+  /** Optional clearly-marked Field Bounty Boss: stays neutral until player approaches or shoots! */
+  isBounty?: boolean;
+  bountyAwake?: boolean;
   attackCooldown: number;
   aiTimer: number;
   aiPhase: number;
@@ -629,7 +631,15 @@ export interface HazardZone {
   canBreakWall?: boolean;
 }
 
-export type PropKind = 'pillar' | 'crate' | 'barrel_red' | 'barrel_ice' | 'barrel_poison' | 'tombstone' | 'coffee_machine';
+export type PropKind =
+  | 'pillar'
+  | 'crate'
+  | 'barrel_red'
+  | 'barrel_ice'
+  | 'barrel_poison'
+  | 'tombstone'
+  | 'coffee_machine'
+  | 'ore_vein';
 
 export interface PropState {
   id: string;
@@ -665,7 +675,7 @@ export interface PickupState {
 
 export interface ShopItem {
   id: string;
-  kind: 'sticker' | 'weapon' | 'heal' | 'transfer_sticker' | 'add_slot' | 'stat_boost' | 'reforge' | 'upgrade_dmg';
+  kind: 'sticker' | 'weapon' | 'heal' | 'transfer_sticker' | 'add_slot' | 'stat_boost' | 'reforge' | 'upgrade_dmg' | 'shield_boost';
   stickerId?: StickerId;
   weapon?: WeaponInstance;
   price: number;
@@ -698,7 +708,9 @@ export interface InteractableState {
     | 'arena_flag'
     | 'enchanter_npc'
     | 'collector_npc'
-    | 'bonus_portal';
+    | 'bonus_portal'
+    | 'campfire'
+    | 'rune_plate';
   x: number;
   y: number;
   radius: number;
@@ -708,6 +720,7 @@ export interface InteractableState {
   hp?: number;
   statueId?: StatueId;
   mercKind?: MercKind;
+  portalDest?: PortalDestination;
   speech?: string;
   speechTimer?: number;
   shopItems?: ShopItem[];
@@ -735,6 +748,7 @@ export interface RoomData {
   secretWallTiles?: Vec2[];
   secretRevealed?: boolean;
   arenaActive?: boolean;
+  runeRewardGiven?: boolean;
 }
 
 export interface FloatingText {
@@ -787,10 +801,11 @@ export interface FloorMap {
 
 export interface WorldState {
   seed: number;
-  floor: number; // 1..15 (1-1..3-5), 16+ = Endless Loop (4-1+)
-  worldIndex: number; // 1, 2, 3, 4+
-  stageIndex: number; // 1..5
+  floor: number;
+  worldIndex: number;
+  stageIndex: number;
   biome: BiomeId;
+  zoneFlavor: ZoneFlavor;
   biomePerWorld: Record<number, BiomeId>;
   time: number;
   status: 'playing' | 'paused_modal' | 'victory' | 'gameover';
@@ -799,6 +814,7 @@ export interface WorldState {
   floorMutator: FloorRuleMutator;
   weaponSwapTimer: number;
   bonusTimer: number;
+  explorationRewarded: boolean;
   map: FloorMap;
   players: Record<PlayerId, PlayerState>;
   pet: PetState;
@@ -822,7 +838,7 @@ export interface WorldState {
   bossBannerName: string;
   glitchBlueScreenTimer: number;
   pendingTalentOptions: TalentId[] | null;
-  pendingStickerOffer: { stickerId: StickerId; sourcePickupId?: string } | null;
+  pendingPortalDest: PortalDestination | null;
   activeWorkshopId: string | null;
   events: SimEvent[];
 }
@@ -841,6 +857,8 @@ export interface RunCheckpoint {
   seed: number;
   floor: number;
   endlessMode: boolean;
+  biome: BiomeId;
+  zoneFlavor: ZoneFlavor;
   biomePerWorld: Record<number, BiomeId>;
   dailyFactors: DailyFactorId[];
   heroId: HeroId;
@@ -859,6 +877,8 @@ export interface RunCheckpoint {
   seedsEarned: Partial<Record<PlantId, number>>;
   weapons: WeaponInstance[];
   activeWeaponIndex: number;
+  weaponVault: WeaponInstance[];
+  stickerBag: StickerId[];
   talents: TalentId[];
   enhancedTalents: TalentId[];
   statueId: StatueId | null;
@@ -905,5 +925,19 @@ export interface MetaSave {
     sfxEnabled: boolean;
     bgmEnabled: boolean;
     shakeEnabled: boolean;
+    buttonScale: number;
+    swapHands: boolean;
+    touchOffsets: {
+      fire: Vec2;
+      skill: Vec2;
+      switch: Vec2;
+    };
+    keyBindings: {
+      fire: string;
+      interact: string;
+      skill: string;
+      switch: string;
+      bag: string;
+    };
   };
 }

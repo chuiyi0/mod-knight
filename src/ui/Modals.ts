@@ -7,7 +7,7 @@ import {
   PLANTS
 } from '../content/biomes';
 import { getHeroStatsAtLevel, HERO_LIST, HERO_UPGRADE_COSTS, HEROES, PET_LIST, PETS } from '../content/heroes';
-import { RARITY_COLORS, RARITY_NAMES, STICKERS, STICKER_IDS } from '../content/stickers';
+import { RARITY_COLORS, STICKERS, STICKER_IDS } from '../content/stickers';
 import { TALENTS } from '../content/talents';
 import { ALL_WEAPON_IDS, WEAPONS } from '../content/weapons';
 import { exportSaveCode, importSaveCode, saveMetaSave, todayDateString } from '../platform/storage';
@@ -29,6 +29,7 @@ import {
   DailyFactorId,
   HeroId,
   MaterialId,
+  MAX_WEAPON_VAULT,
   MetaSave,
   PlantId,
   RunCheckpoint,
@@ -41,6 +42,7 @@ import { GameWorld } from '../sim/world';
 export class ModalManager {
   private root: HTMLElement;
   private isOpenFlag = false;
+  private selectedStickerBagIdx: number | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -52,6 +54,7 @@ export class ModalManager {
 
   close(): void {
     this.isOpenFlag = false;
+    this.selectedStickerBagIdx = null;
     this.root.innerHTML = '';
   }
 
@@ -77,83 +80,271 @@ export class ModalManager {
     return this.root.querySelector('#modal-body') as HTMLElement;
   }
 
-  // === DUNGEON MODALS ===
+  // === DUNGEON: BIG VAULT + STICKER BAG + RECYCLE MODAL ===
 
-  openStickerOffer(world: GameWorld, onDone: () => void): void {
-    const offer = world.state.pendingStickerOffer;
-    if (!offer) return;
-    const sd = STICKERS[offer.stickerId];
+  openVaultAndStickerBag(world: GameWorld, onClose: () => void): void {
     const p = world.getMainPlayer();
+    const selIdx = this.selectedStickerBagIdx;
+    const selSticker = selIdx !== null ? p.stickerBag[selIdx] : null;
 
-    const weaponsHtml = p.weapons
-      .map((w, idx) => {
-        const wd = WEAPONS[w.defId];
-        const maxS = getWeaponMaxSlots(p, w, world.state.dailyFactors);
-        const dup = !world.state.endlessMode && w.stickers.includes(offer.stickerId);
-        const full = w.stickers.length >= maxS;
-        const chips = w.stickers.map((s) => `<span class="sticker-chip" style="background:${STICKERS[s].color}">${STICKERS[s].shortTag}</span>`).join('');
-        return `
-          <div class="item-card">
-            <div class="item-card-title" style="color:${RARITY_COLORS[wd.rarity]}">${wd.name} (${w.stickers.length}/${maxS}槽)</div>
-            <div class="sticker-tags">${chips || '<span style="font-size:11px;color:#90a4ae">暂无贴纸</span>'}</div>
-            <button class="px-btn ${dup ? '' : 'primary'}" data-attach="${idx}" ${dup ? 'disabled' : ''}>
-              ${dup ? '已有同款贴纸' : full ? '覆盖最后一张贴纸' : '🏷️ 贴在这把武器上'}
-            </button>
+    const renderWeaponBox = (w: typeof p.weapons[number], target: 'equipped' | 'vault', idx: number) => {
+      const wd = WEAPONS[w.defId];
+      const maxS = getWeaponMaxSlots(p, w, world.state.dailyFactors);
+      const chips = w.stickers
+        .map(
+          (sid, sIdx) =>
+            `<button class="sticker-chip" style="background:${STICKERS[sid].color};border:none;cursor:pointer" data-detach="${target}:${idx}:${sIdx}" title="点击免费撕回背包">
+              ${STICKERS[sid].shortTag} ✕
+            </button>`
+        )
+        .join('');
+      return `
+        <div class="item-card ${target === 'equipped' && idx === p.activeWeaponIndex ? 'gold-frame' : ''}">
+          <div class="item-card-title" style="color:${RARITY_COLORS[wd.rarity]}">
+            ${target === 'equipped' ? '⚔️ ' : '📦 '}${wd.name} (${w.stickers.length}/${maxS}槽)
           </div>
-        `;
-      })
-      .join('');
+          <div class="item-card-desc">${wd.desc}</div>
+          <div class="sticker-tags">${chips || '<span style="font-size:11px;color:#90a4ae">暂无贴纸（点击下方背包贴纸贴上）</span>'}</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">
+            ${
+              selSticker
+                ? `<button class="px-btn primary" data-attach-to="${target}:${idx}">🏷️ 贴上【${STICKERS[selSticker].shortTag}】</button>`
+                : ''
+            }
+            ${
+              target === 'vault'
+                ? `<button class="px-btn ok" data-vault-equip="${idx}">装备到手</button>
+                   <button class="px-btn danger" data-vault-rec="${idx}">♻️ 回收</button>`
+                : p.weapons.length > 1
+                  ? `<button class="px-btn danger" data-eq-rec="${idx}">♻️ 回收</button>`
+                  : ''
+            }
+          </div>
+        </div>
+      `;
+    };
+
+    const equippedHtml = p.weapons.map((w, i) => renderWeaponBox(w, 'equipped', i)).join('');
+    const vaultHtml =
+      p.weaponVault.length > 0
+        ? p.weaponVault.map((w, i) => renderWeaponBox(w, 'vault', i)).join('')
+        : '<div style="font-size:12px;color:#90a4ae">仓库空空的——走近地上武器可一键存入仓库备用或回收！</div>';
+
+    const stickerBagHtml =
+      p.stickerBag.length > 0
+        ? p.stickerBag
+            .map((sid, i) => {
+              const s = STICKERS[sid];
+              const isSel = i === selIdx;
+              return `
+                <div class="item-card ${isSel ? 'gold-frame' : ''}" style="border-color:${isSel ? '#ffd54f' : s.color}">
+                  <div class="item-card-title" style="color:${s.color}">🏷️ ${s.name}</div>
+                  <div class="item-card-desc">${s.desc}</div>
+                  <div style="display:flex;gap:5px">
+                    <button class="px-btn ${isSel ? 'ok' : 'primary'}" data-pick-st="${i}">${isSel ? '已选中↑点武器贴上' : '选中去贴'}</button>
+                    <button class="px-btn" data-sell-st="${i}">💰 卖22金</button>
+                  </div>
+                </div>
+              `;
+            })
+            .join('')
+        : '<div style="font-size:12px;color:#90a4ae">贴纸背包为空（拾取贴纸自动入包，点武器上已有贴纸可免费撕回背包重组！）</div>';
 
     const body = this.renderCard(
-      `🏷️ 发现魔改贴纸：【${sd.name}】`,
+      `🎒 大仓库 & 魔改贴纸背包 · 金币 💰${p.coins}`,
       `
-        <div class="item-card" style="border-color:${sd.color};margin-bottom:12px">
-          <div class="item-card-title" style="color:${sd.color}">[${RARITY_NAMES[sd.rarity]}] ${sd.name}（蓝耗修正: ${sd.manaDelta >= 0 ? '+' + sd.manaDelta : sd.manaDelta}）</div>
-          <div class="item-card-desc">${sd.desc}</div>
+        <div style="font-size:12px;color:#80d8ff;margin-bottom:8px">
+          💡 <b>自由魔改指南</b>：点下方任意贴纸「选中去贴」，再点上方武器即可贴上；点击武器上的贴纸标签 ✕ 可<b>免费无损撕回背包</b>！
         </div>
-        <div class="grid-cards">${weaponsHtml}</div>
-        <div style="margin-top:12px;display:flex;justify-content:flex-end">
-          <button class="px-btn" id="btn-scrap">💰 不要了，分解换 25 金币 + 荧光胶水</button>
+        <h4 style="margin:6px 0;color:#ffd54f">⚔️ 手持武器 (${p.weapons.length})</h4>
+        <div class="grid-cards">${equippedHtml}</div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">
+          <h4 style="margin:0;color:#80d8ff">📦 备用武器仓库 (${p.weaponVault.length}/${MAX_WEAPON_VAULT})</h4>
+          ${p.weaponVault.length > 0 ? `<button class="px-btn ok" id="btn-rec-all">♻️ 一键回收全部备用武器</button>` : ''}
         </div>
-      `
+        <div class="grid-cards">${vaultHtml}</div>
+
+        <h4 style="margin:12px 0 6px;color:#c77dff">🏷️ 贴纸背包 (${p.stickerBag.length} 张)</h4>
+        <div class="grid-cards">${stickerBagHtml}</div>
+      `,
+      onClose
     );
 
-    body.querySelectorAll('[data-attach]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const idx = Number((btn as HTMLElement).dataset.attach);
-        if (world.applyStickerToWeapon(idx)) {
-          this.close();
-          onDone();
-        }
+    body.querySelectorAll('[data-pick-st]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const i = Number((b as HTMLElement).dataset.pickSt);
+        this.selectedStickerBagIdx = this.selectedStickerBagIdx === i ? null : i;
+        this.openVaultAndStickerBag(world, onClose);
       });
     });
-    body.querySelector('#btn-scrap')?.addEventListener('click', () => {
-      world.scrapPendingSticker();
-      this.close();
-      onDone();
+    body.querySelectorAll('[data-sell-st]').forEach((b) => {
+      b.addEventListener('click', () => {
+        world.sellBagSticker(Number((b as HTMLElement).dataset.sellSt));
+        this.selectedStickerBagIdx = null;
+        this.openVaultAndStickerBag(world, onClose);
+      });
+    });
+    body.querySelectorAll('[data-attach-to]').forEach((b) => {
+      b.addEventListener('click', () => {
+        if (this.selectedStickerBagIdx === null) return;
+        const [t, idxStr] = (b as HTMLElement).dataset.attachTo!.split(':');
+        if (world.attachBagStickerToWeapon(this.selectedStickerBagIdx, t as 'equipped' | 'vault', Number(idxStr))) {
+          this.selectedStickerBagIdx = null;
+        }
+        this.openVaultAndStickerBag(world, onClose);
+      });
+    });
+    body.querySelectorAll('[data-detach]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const [t, wIdx, sIdx] = (b as HTMLElement).dataset.detach!.split(':');
+        world.detachStickerToBag(t as 'equipped' | 'vault', Number(wIdx), Number(sIdx));
+        this.openVaultAndStickerBag(world, onClose);
+      });
+    });
+    body.querySelectorAll('[data-vault-equip]').forEach((b) => {
+      b.addEventListener('click', () => {
+        world.equipFromVault(Number((b as HTMLElement).dataset.vaultEquip));
+        this.openVaultAndStickerBag(world, onClose);
+      });
+    });
+    body.querySelectorAll('[data-vault-rec]').forEach((b) => {
+      b.addEventListener('click', () => {
+        world.recycleVaultWeapon(Number((b as HTMLElement).dataset.vaultRec));
+        this.openVaultAndStickerBag(world, onClose);
+      });
+    });
+    body.querySelectorAll('[data-eq-rec]').forEach((b) => {
+      b.addEventListener('click', () => {
+        world.recycleEquippedWeapon(Number((b as HTMLElement).dataset.eqRec));
+        this.openVaultAndStickerBag(world, onClose);
+      });
+    });
+    body.querySelector('#btn-rec-all')?.addEventListener('click', () => {
+      world.recycleAllVaultWeapons();
+      this.openVaultAndStickerBag(world, onClose);
     });
   }
+
+  // === CUSTOM CONTROLS EDITOR (Touch Drag + Scale + Swap Hands + PC Keybindings) ===
+
+  openControlsEditor(meta: MetaSave, onApply: () => void, onToast: (m: string) => void, onClose: () => void): void {
+    const s = meta.settings;
+    const kb = s.keyBindings;
+    const body = this.renderCard(
+      '🎮 自定义键位与触屏布局',
+      `
+        <div class="item-card" style="margin-bottom:10px">
+          <div class="item-card-title">📱 手机触屏布局调整</div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0">
+            <label style="font-size:12px">按钮缩放：<b>${Math.round(s.buttonScale * 100)}%</b></label>
+            <input id="rng-scale" type="range" min="0.75" max="1.35" step="0.05" value="${s.buttonScale}" style="flex:1" />
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+            <button class="px-btn ${s.swapHands ? 'primary' : ''}" id="btn-swap-hands">🔄 左右手互换：${s.swapHands ? '左手攻击/右手摇杆' : '左手摇杆/右手攻击'}</button>
+            <button class="px-btn" id="btn-reset-pos">↩️ 重置默认位置</button>
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:#80d8ff">微调三键位置（每点一次移动 12px，实时生效）：</div>
+          <div class="grid-cards" style="margin-top:6px">
+            ${(['fire', 'skill', 'switch'] as const)
+              .map((k) => {
+                const name = k === 'fire' ? '⚔️ 攻击键' : k === 'skill' ? '⚡ 技能键' : '🔄 切枪键';
+                const off = s.touchOffsets[k];
+                return `
+                  <div class="item-card">
+                    <div style="font-size:12px;font-weight:800">${name} (${off.x}, ${off.y})</div>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap">
+                      <button class="px-btn" data-nudge="${k}:0:-12">↑</button>
+                      <button class="px-btn" data-nudge="${k}:0:12">↓</button>
+                      <button class="px-btn" data-nudge="${k}:-12:0">←</button>
+                      <button class="px-btn" data-nudge="${k}:12:0">→</button>
+                    </div>
+                  </div>
+                `;
+              })
+              .join('')}
+          </div>
+        </div>
+
+        <div class="item-card">
+          <div class="item-card-title">⌨️ 电脑键盘自定义改键（点击按钮后按新键）</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+            <button class="px-btn" data-rebind="fire">攻击：<b>${kb.fire.toUpperCase()}</b></button>
+            <button class="px-btn" data-rebind="interact">互动：<b>${kb.interact.toUpperCase()}</b></button>
+            <button class="px-btn" data-rebind="skill">技能：<b>${kb.skill.toUpperCase()}</b></button>
+            <button class="px-btn" data-rebind="switch">切枪：<b>${kb.switch.toUpperCase()}</b></button>
+            <button class="px-btn" data-rebind="bag">背包：<b>${kb.bag.toUpperCase()}</b></button>
+          </div>
+        </div>
+      `,
+      onClose
+    );
+
+    body.querySelector('#rng-scale')?.addEventListener('input', (e) => {
+      s.buttonScale = Number((e.target as HTMLInputElement).value);
+      saveMetaSave(meta);
+      onApply();
+      this.openControlsEditor(meta, onApply, onToast, onClose);
+    });
+    body.querySelector('#btn-swap-hands')?.addEventListener('click', () => {
+      s.swapHands = !s.swapHands;
+      saveMetaSave(meta);
+      onApply();
+      onToast(s.swapHands ? '已切换为左手攻击 / 右手摇杆' : '已切换为左手摇杆 / 右手攻击');
+      this.openControlsEditor(meta, onApply, onToast, onClose);
+    });
+    body.querySelector('#btn-reset-pos')?.addEventListener('click', () => {
+      s.buttonScale = 1.0;
+      s.swapHands = false;
+      s.touchOffsets = { fire: { x: 0, y: 0 }, skill: { x: 0, y: 0 }, switch: { x: 0, y: 0 } };
+      s.keyBindings = { fire: 'j', interact: 'f', skill: 'k', switch: 'q', bag: 'tab' };
+      saveMetaSave(meta);
+      onApply();
+      onToast('✅ 已恢复全部默认键位！');
+      this.openControlsEditor(meta, onApply, onToast, onClose);
+    });
+    body.querySelectorAll('[data-nudge]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const [k, dx, dy] = (b as HTMLElement).dataset.nudge!.split(':');
+        const key = k as 'fire' | 'skill' | 'switch';
+        s.touchOffsets[key].x = Math.max(-140, Math.min(100, s.touchOffsets[key].x + Number(dx)));
+        s.touchOffsets[key].y = Math.max(-140, Math.min(80, s.touchOffsets[key].y + Number(dy)));
+        saveMetaSave(meta);
+        onApply();
+        this.openControlsEditor(meta, onApply, onToast, onClose);
+      });
+    });
+    body.querySelectorAll('[data-rebind]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const action = (b as HTMLElement).dataset.rebind as keyof typeof kb;
+        b.textContent = '请按任意新键...';
+        const handler = (ev: KeyboardEvent) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          kb[action] = ev.key.toLowerCase();
+          saveMetaSave(meta);
+          onApply();
+          window.removeEventListener('keydown', handler, true);
+          onToast(`⌨️ 已改键为 [${ev.key.toUpperCase()}]`);
+          this.openControlsEditor(meta, onApply, onToast, onClose);
+        };
+        window.addEventListener('keydown', handler, true);
+      });
+    });
+  }
+
+  // === DUNGEON TALENT / SHOP / PAUSE / RESULT ===
 
   openTalentChoice(world: GameWorld, onDone: () => void): void {
     const opts = world.state.pendingTalentOptions;
     if (!opts) return;
-    const html = `
-      <div class="grid-cards">
-        ${opts
-          .map((tid) => {
-            const t = TALENTS[tid];
-            return `
-              <div class="item-card">
-                <div class="item-card-title">${t.icon} ${t.name}</div>
-                <div class="item-card-desc">${t.desc}</div>
-                <button class="px-btn primary" data-talent="${tid}">选择此天赋</button>
-              </div>
-            `;
-          })
-          .join('')}
-      </div>
-    `;
-    const body = this.renderCard('✨ 过关奖励：请选择 1 项局内天赋', html);
+    const html = `<div class="grid-cards">${opts
+      .map((tid) => {
+        const t = TALENTS[tid];
+        return `<div class="item-card"><div class="item-card-title">${t.icon} ${t.name}</div><div class="item-card-desc">${t.desc}</div><button class="px-btn primary" data-talent="${tid}">选择此天赋</button></div>`;
+      })
+      .join('')}</div>`;
+    const body = this.renderCard('✨ 旅途成长：请选择 1 项天赋', html);
     body.querySelectorAll('[data-talent]').forEach((btn) => {
       btn.addEventListener('click', () => {
         world.pickTalent((btn as HTMLElement).dataset.talent as TalentId);
@@ -169,9 +360,9 @@ export class ModalManager {
     const p = world.getMainPlayer();
 
     const titleMap: Record<string, string> = {
-      workshop_npc: '🏷️ 阿胶的贴纸魔改工坊',
-      merchant_npc: '🛒 黑心奸商摊位（提示：攻击他可硬抢！）',
-      demon_npc: '😈 恶魔诅咒祭坛（用生命上限换神器）',
+      workshop_npc: '🏷️ 贴纸工坊（买了直接进贴纸背包！）',
+      merchant_npc: '🛒 旅途集市商店（金币随便花！）',
+      demon_npc: '😈 恶魔交易坛（自愿换神装）',
       forge_npc: '🔨 猫头鹰铁匠重铸炉'
     };
 
@@ -199,7 +390,7 @@ export class ModalManager {
       .join('');
 
     const body = this.renderCard(
-      `${titleMap[inter.kind] ?? '地牢商店'} · 当前金币 💰${p.coins} · 血上限 ❤️${p.maxHp}`,
+      `${titleMap[inter.kind] ?? '旅途商店'} · 金币 💰${p.coins} · 血上限 ❤️${p.maxHp}`,
       `<div class="grid-cards">${itemsHtml}</div>`,
       () => {
         world.closeWorkshopModal();
@@ -209,602 +400,303 @@ export class ModalManager {
 
     body.querySelectorAll('[data-buy]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const itemId = (btn as HTMLElement).dataset.buy!;
-        world.buyShopItem(interactableId, itemId);
-        if (world.state.pendingStickerOffer) {
-          this.openStickerOffer(world, onDone);
-        } else {
-          this.openWorkshopShop(world, interactableId, onDone);
-        }
+        world.buyShopItem(interactableId, (btn as HTMLElement).dataset.buy!);
+        this.openWorkshopShop(world, interactableId, onDone);
       });
     });
   }
 
-  openDungeonBagAndPause(
+  openPauseMenu(
     world: GameWorld,
     meta: MetaSave,
-    opts: { onResume: () => void; onReturnLobby: () => void; onToggleSettings: () => void }
+    opts: { onResume: () => void; onReturnLobby: () => void; onToggleSettings: () => void; onOpenControls: () => void }
   ): void {
     const p = world.getMainPlayer();
-    const wpns = p.weapons
-      .map((w) => {
-        const wd = WEAPONS[w.defId];
-        const maxS = getWeaponMaxSlots(p, w, world.state.dailyFactors);
-        const stList = w.stickers
-          .map((s) => `<div style="font-size:11px;color:${STICKERS[s].color}">• ${STICKERS[s].name}：${STICKERS[s].desc}</div>`)
-          .join('');
-        return `
-          <div class="item-card">
-            <div class="item-card-title" style="color:${RARITY_COLORS[wd.rarity]}">${wd.name} (${w.stickers.length}/${maxS}槽)</div>
-            <div class="item-card-desc">${wd.desc}</div>
-            ${stList || '<div style="font-size:11px;color:#78909c">暂无贴纸</div>'}
-          </div>
-        `;
-      })
-      .join('');
-
     const talentsHtml =
       p.talents.map((t) => `<span class="sticker-chip" style="background:#372c54;color:#ffd54f;padding:3px 6px">${TALENTS[t].icon} ${TALENTS[t].name}</span>`).join(' ') ||
       '<span style="font-size:12px;color:#90a4ae">尚未获得局内天赋</span>';
 
     const body = this.renderCard(
-      `⏸️ 装备魔改详情 & 暂停（${world.state.worldIndex}-${world.state.stageIndex} ${BIOMES[world.state.biome].name}）`,
+      `⚙️ 暂停与设置（第 ${world.state.floor} 区 · ${BIOMES[world.state.biome].name}）`,
       `
-        <div class="grid-cards">${wpns}</div>
-        <div style="margin:12px 0"><b>已选天赋：</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${talentsHtml}</div></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-          <button class="px-btn ok" id="btn-p-resume">▶ 继续战斗</button>
+        <div style="margin-bottom:12px"><b>已选天赋：</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${talentsHtml}</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="px-btn ok" id="btn-p-resume">▶ 继续探险</button>
+          <button class="px-btn primary" id="btn-p-ctrl">🎮 自定义键位与按钮布局</button>
           <button class="px-btn" id="btn-p-sfx">🔊 音效: ${meta.settings.sfxEnabled ? '开' : '关'}</button>
           <button class="px-btn" id="btn-p-bgm">🎵 音乐: ${meta.settings.bgmEnabled ? '开' : '关'}</button>
           <button class="px-btn" id="btn-p-shake">📳 震屏: ${meta.settings.shakeEnabled ? '开' : '关'}</button>
-          <button class="px-btn danger" id="btn-p-lobby">🏠 结算并返回豪华客厅</button>
+          <button class="px-btn danger" id="btn-p-lobby">🏠 结算回首页</button>
         </div>
       `,
       opts.onResume
     );
 
-    body.querySelector('#btn-p-resume')?.addEventListener('click', () => {
-      this.close();
-      opts.onResume();
-    });
-    body.querySelector('#btn-p-sfx')?.addEventListener('click', () => {
-      meta.settings.sfxEnabled = !meta.settings.sfxEnabled;
-      saveMetaSave(meta);
-      opts.onToggleSettings();
-      this.openDungeonBagAndPause(world, meta, opts);
-    });
-    body.querySelector('#btn-p-bgm')?.addEventListener('click', () => {
-      meta.settings.bgmEnabled = !meta.settings.bgmEnabled;
-      saveMetaSave(meta);
-      opts.onToggleSettings();
-      this.openDungeonBagAndPause(world, meta, opts);
-    });
-    body.querySelector('#btn-p-shake')?.addEventListener('click', () => {
-      meta.settings.shakeEnabled = !meta.settings.shakeEnabled;
-      saveMetaSave(meta);
-      opts.onToggleSettings();
-      this.openDungeonBagAndPause(world, meta, opts);
-    });
-    body.querySelector('#btn-p-lobby')?.addEventListener('click', () => {
-      this.close();
-      opts.onReturnLobby();
-    });
+    body.querySelector('#btn-p-resume')?.addEventListener('click', () => { this.close(); opts.onResume(); });
+    body.querySelector('#btn-p-ctrl')?.addEventListener('click', () => opts.onOpenControls());
+    body.querySelector('#btn-p-sfx')?.addEventListener('click', () => { meta.settings.sfxEnabled = !meta.settings.sfxEnabled; saveMetaSave(meta); opts.onToggleSettings(); this.openPauseMenu(world, meta, opts); });
+    body.querySelector('#btn-p-bgm')?.addEventListener('click', () => { meta.settings.bgmEnabled = !meta.settings.bgmEnabled; saveMetaSave(meta); opts.onToggleSettings(); this.openPauseMenu(world, meta, opts); });
+    body.querySelector('#btn-p-shake')?.addEventListener('click', () => { meta.settings.shakeEnabled = !meta.settings.shakeEnabled; saveMetaSave(meta); opts.onToggleSettings(); this.openPauseMenu(world, meta, opts); });
+    body.querySelector('#btn-p-lobby')?.addEventListener('click', () => { this.close(); opts.onReturnLobby(); });
   }
 
-  openRunResult(
-    world: GameWorld,
-    won: boolean,
-    settledGems: number,
-    opts: { onRevive?: () => void; onEndless?: () => void; onLobby: () => void }
-  ): void {
+  openRunResult(world: GameWorld, won: boolean, settledGems: number, opts: { onRevive?: () => void; onEndless?: () => void; onLobby: () => void }): void {
     const p = world.getMainPlayer();
-    const wCert = p.weapons
-      .map((w) => {
-        const st = w.stickers.map((s) => `[${STICKERS[s].shortTag}]`).join('');
-        return `<div>• <b>${WEAPONS[w.defId].name}</b> ${st}</div>`;
-      })
-      .join('');
-
+    const wCert = p.weapons.map((w) => `<div>• <b>${WEAPONS[w.defId].name}</b> ${w.stickers.map((s) => `[${STICKERS[s].shortTag}]`).join('')}</div>`).join('');
     const body = this.renderCard(
-      won ? '🏆 通关证书！魔法核心已夺回！' : '💀 冒险倒下了……但收获全部带回！',
+      won ? '🏆 通关证书！魔法核心已夺回！' : '💀 探险结束……所有蓝币材料全部带回！',
       `
         <div class="item-card gold-frame" style="margin-bottom:12px">
-          <div>抵达层数：<b>${world.state.worldIndex}-${world.state.stageIndex}（第 ${world.state.floor} 层）</b></div>
-          <div>本局击杀：<b>${p.kills} 只怪物</b> · 结算蓝币：<b>+${settledGems} 💎</b></div>
-          <div style="margin-top:6px"><b>本局魔改神兵配方：</b>${wCert}</div>
+          <div>抵达进度：<b>第 ${world.state.floor} 区（${BIOMES[world.state.biome].name}）</b></div>
+          <div>击杀怪物：<b>${p.kills}</b> · 结算蓝币：<b>+${settledGems} 💎</b></div>
+          <div style="margin-top:6px"><b>神兵配方：</b>${wCert}</div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           ${!won && !p.reviveUsed && opts.onRevive ? `<button class="px-btn ok" id="btn-revive">✨ 免费女神复活（本局限1次）</button>` : ''}
-          ${won && opts.onEndless ? `<button class="px-btn primary" id="btn-endless">🔥 保留神装勇闯 4-1 无尽深渊！</button>` : ''}
-          <button class="px-btn primary" id="btn-go-lobby">🏠 凯旋返回豪华客厅</button>
+          ${won && opts.onEndless ? `<button class="px-btn primary" id="btn-endless">🔥 保留神装勇闯无尽模式！</button>` : ''}
+          <button class="px-btn primary" id="btn-go-lobby">🏠 返回主页</button>
         </div>
       `
     );
-
-    body.querySelector('#btn-revive')?.addEventListener('click', () => {
-      this.close();
-      opts.onRevive?.();
-    });
-    body.querySelector('#btn-endless')?.addEventListener('click', () => {
-      this.close();
-      opts.onEndless?.();
-    });
-    body.querySelector('#btn-go-lobby')?.addEventListener('click', () => {
-      this.close();
-      opts.onLobby();
-    });
+    body.querySelector('#btn-revive')?.addEventListener('click', () => { this.close(); opts.onRevive?.(); });
+    body.querySelector('#btn-endless')?.addEventListener('click', () => { this.close(); opts.onEndless?.(); });
+    body.querySelector('#btn-go-lobby')?.addEventListener('click', () => { this.close(); opts.onLobby(); });
   }
 
-  // === DELUXE LOBBY MODALS ===
+  // === SIMPLE LOBBY UNIFIED MODALS ===
 
-  openPortalModal(
-    meta: MetaSave,
-    checkpoint: RunCheckpoint | null,
-    opts: {
-      onStartNormal: () => void;
-      onStartDaily: () => void;
-      onResume: () => void;
-      onClose: () => void;
-    }
-  ): void {
+  openStartModal(meta: MetaSave, checkpoint: RunCheckpoint | null, opts: { onStartNormal: () => void; onStartDaily: (f: DailyFactorId[]) => void; onResume: () => void; onClose: () => void }): void {
     const today = todayDateString();
     const factors = getDailyChallengeFactors(today, meta.dailySeedOffset);
     const fHtml = factors.map((f) => `<span class="sticker-chip" style="background:${DAILY_FACTORS[f].positive ? '#69f0ae' : '#ff5277'}">${DAILY_FACTORS[f].icon}${DAILY_FACTORS[f].name}</span>`).join(' ');
 
     const body = this.renderCard(
-      '🌀 地牢传送门 · 准备出征！',
+      '🚀 准备出发探险！',
       `
-        <div class="item-card" style="margin-bottom:10px">
-          <div>当前英雄：<b>${HEROES[meta.selectedHero].name} Lv.${meta.heroLevels[meta.selectedHero] ?? 1}</b> · 携带萌宠：<b>${PETS[meta.selectedPet].name}</b></div>
-          <div style="font-size:12px;color:#b0bec5;margin-top:4px">
-            出门锻造装：<b>${meta.preparedWeapon ? WEAPONS[meta.preparedWeapon.defId].name : '无'}</b> ·
-            开局预印贴纸：<b>${meta.preparedStickers[0] ? STICKERS[meta.preparedStickers[0]].name : '无'}</b> ·
-            花园天赋：<b>${meta.preparedTalents.length} 项</b>
-          </div>
-        </div>
-        ${
-          checkpoint
-            ? `<div class="item-card gold-frame" style="margin-bottom:10px">
-                <div class="item-card-title">💾 检测到未完成冒险断点（第 ${checkpoint.floor} 层 · ${HEROES[checkpoint.heroId].name}）</div>
-                <button class="px-btn ok" id="btn-p-cont">▶ 继续上次冒险</button>
-              </div>`
-            : ''
-        }
+        ${checkpoint ? `<div class="item-card gold-frame" style="margin-bottom:10px"><div class="item-card-title">💾 未完成断点（第 ${checkpoint.floor} 区 · ${HEROES[checkpoint.heroId].name}）</div><button class="px-btn ok" id="btn-p-cont">▶ 继续上次探险</button></div>` : ''}
         <div class="grid-cards">
           <div class="item-card">
-            <div class="item-card-title">⚔️ 经典 3 大关冒险（1-1 ~ 3-5）</div>
-            <div class="item-card-desc">15 层完整地牢，随机双生态 + 16 奇遇房 + 3 位关底 Boss，通关可进无尽深渊！</div>
-            <button class="px-btn primary" id="btn-p-normal">🚀 开始标准冒险</button>
+            <div class="item-card-title">🗺️ 自由探索之旅（无死胡同）</div>
+            <div class="item-card-desc">多传送门自由挑选新生态、每图必刷商店、每3图1位大Boss + 野外悬赏头领！</div>
+            <button class="px-btn primary" id="btn-p-normal">⚔️ 立刻出发</button>
           </div>
           <div class="item-card">
-            <div class="item-card-title">📋 今日挑战模式（额外 +1500 蓝币）</div>
+            <div class="item-card-title">📋 今日挑战因子（+1500💎）</div>
             <div class="item-card-desc"><div class="sticker-tags">${fHtml}</div></div>
-            <button class="px-btn primary" id="btn-p-daily">🔥 接取每日挑战出发</button>
+            <button class="px-btn primary" id="btn-p-daily">🔥 接取每日挑战</button>
           </div>
         </div>
       `,
       opts.onClose
     );
-
-    body.querySelector('#btn-p-cont')?.addEventListener('click', () => {
-      this.close();
-      opts.onResume();
-    });
-    body.querySelector('#btn-p-normal')?.addEventListener('click', () => {
-      this.close();
-      opts.onStartNormal();
-    });
-    body.querySelector('#btn-p-daily')?.addEventListener('click', () => {
-      this.close();
-      opts.onStartDaily();
-    });
+    body.querySelector('#btn-p-cont')?.addEventListener('click', () => { this.close(); opts.onResume(); });
+    body.querySelector('#btn-p-normal')?.addEventListener('click', () => { this.close(); opts.onStartNormal(); });
+    body.querySelector('#btn-p-daily')?.addEventListener('click', () => { this.close(); opts.onStartDaily(factors); });
   }
 
-  openHeroesModal(meta: MetaSave, focusHero: HeroId | undefined, onToast: (m: string) => void, onClose: () => void): void {
-    const cards = HERO_LIST.map((h) => {
-      const unlocked = meta.unlockedHeroes.includes(h.id);
-      const selected = meta.selectedHero === h.id;
-      const lv = meta.heroLevels[h.id] ?? 1;
-      const stats = getHeroStatsAtLevel(h.id, lv);
-      const upCost = lv < 7 ? HERO_UPGRADE_COSTS[lv] : 0;
-      return `
-        <div class="item-card ${selected || h.id === focusHero ? 'gold-frame' : ''}">
-          <div class="item-card-title" style="color:${h.color}">${h.name} · Lv.${lv}/7 ${selected ? '✅出战中' : ''}</div>
-          <div class="item-card-desc">
-            血${stats.maxHp} / 盾${stats.maxShield} / 蓝${stats.maxMana}<br/>
-            <b>技能【${h.skillName}】</b>：${h.skillDesc}<br/>
-            <span style="color:#ffd54f">${h.passiveDesc}</span>
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="px-btn ${selected ? 'ok' : 'primary'}" data-sel-hero="${h.id}">
-              ${selected ? '已出战' : unlocked ? '选择出战' : h.unlockCost < 0 ? '通关3-5解锁' : `解锁 (${h.unlockCost}💎)`}
-            </button>
-            ${
-              unlocked && lv < 7
-                ? `<button class="px-btn" data-up-hero="${h.id}">⬆️ 升级 (${upCost}💎)</button>`
-                : ''
-            }
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    const body = this.renderCard(`🧙 英雄客厅（蓝币 💎${meta.gems}）`, `<div class="grid-cards">${cards}</div>`, onClose);
-    body.querySelectorAll('[data-sel-hero]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const res = unlockOrSelectHero(meta, (b as HTMLElement).dataset.selHero as HeroId);
-        onToast(res.msg);
-        this.openHeroesModal(meta, undefined, onToast, onClose);
-      });
-    });
-    body.querySelectorAll('[data-up-hero]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const res = upgradeHero(meta, (b as HTMLElement).dataset.upHero as HeroId);
-        onToast(res.msg);
-        this.openHeroesModal(meta, undefined, onToast, onClose);
-      });
-    });
-  }
-
-  openPetsModal(meta: MetaSave, onToast: (m: string) => void, onClose: () => void): void {
-    const cards = PET_LIST.map((p) => {
-      const unlocked = meta.unlockedPets.includes(p.id);
-      const selected = meta.selectedPet === p.id;
-      return `
-        <div class="item-card ${selected ? 'gold-frame' : ''}">
-          <div class="item-card-title" style="color:${p.color}">🐾 ${p.name}</div>
-          <div class="item-card-desc">${p.desc}<br/><span style="color:#ffd54f">${unlocked ? '已拥有' : p.unlockHint}</span></div>
-          <button class="px-btn ${selected ? 'ok' : 'primary'}" data-pet="${p.id}">
-            ${selected ? '✅ 携宠中' : unlocked ? '带它出战' : p.unlockCost > 0 ? `解锁 (${p.unlockCost}💎)` : '成就解锁'}
-          </button>
-        </div>
-      `;
-    }).join('');
-    const body = this.renderCard(`🐾 客厅宠物窝（蓝币 💎${meta.gems}）`, `<div class="grid-cards">${cards}</div>`, onClose);
-    body.querySelectorAll('[data-pet]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const res = unlockOrSelectPet(meta, (b as HTMLElement).dataset.pet as typeof meta.selectedPet);
-        onToast(res.msg);
-        this.openPetsModal(meta, onToast, onClose);
-      });
-    });
-  }
-
-  openGardenModal(meta: MetaSave, onToast: (m: string) => void, onClose: () => void): void {
-    const seedOpts = (Object.keys(PLANTS) as PlantId[])
-      .filter((pid) => (meta.seeds[pid] ?? 0) > 0)
-      .map((pid) => `<option value="${pid}">${PLANTS[pid].icon} ${PLANTS[pid].name} (余${meta.seeds[pid]})</option>`)
-      .join('');
-
-    const plotsHtml = meta.garden
-      .map((plot, idx) => {
-        if (!plot.unlocked) {
-          const cost = 600 + (idx - 3) * 400;
-          return `
-            <div class="item-card">
-              <div class="item-card-title">🔒 第 ${idx + 1} 块未开垦花盆</div>
-              <div class="item-card-desc">开辟新地块种更多天赋植物！</div>
-              <button class="px-btn primary" data-unlock-plot="${idx}">开垦 (${cost}💎)</button>
-            </div>
-          `;
-        }
-        if (!plot.plantId) {
-          return `
-            <div class="item-card">
-              <div class="item-card-title">🟫 第 ${idx + 1} 块空花盆</div>
-              <div class="item-card-desc">完成 2 局地牢或次日即可收获，无需苦等！</div>
-              ${
-                seedOpts
-                  ? `<select id="seed-sel-${idx}" style="padding:4px;border-radius:4px;background:#1b1629;color:#fff">${seedOpts}</select>
-                     <button class="px-btn ok" data-plant-plot="${idx}">🌱 种下并浇水</button>`
-                  : `<div style="font-size:11px;color:#90a4ae">暂无种子（打Boss/许愿池/扭蛋获得）</div>`
-              }
-            </div>
-          `;
-        }
-        const def = PLANTS[plot.plantId];
-        const mature = isGardenPlotMature(plot);
-        return `
-          <div class="item-card ${mature ? 'gold-frame' : ''}">
-            <div class="item-card-title">${def.icon} ${def.name} ${def.perennial ? '(多年生)' : ''}</div>
-            <div class="item-card-desc">${def.desc}<br/>状态：${mature ? '<b style="color:#69f0ae">✨ 已成熟可采摘！</b>' : `成长中（已完成 ${plot.runsSincePlanted}/2 局，或明日成熟）`}</div>
-            <button class="px-btn ${mature ? 'ok' : ''}" data-harvest-plot="${idx}" ${mature ? '' : 'disabled'}>
-              ${mature ? '🌾 立即收获' : '生长中...'}
-            </button>
-          </div>
-        `;
-      })
-      .join('');
-
-    const body = this.renderCard(`🌱 魔法种植花园（6 块肥沃花盆 · 💎${meta.gems}）`, `<div class="grid-cards">${plotsHtml}</div>`, onClose);
-    body.querySelectorAll('[data-unlock-plot]').forEach((b) => {
-      b.addEventListener('click', () => {
-        onToast(unlockGardenPlot(meta, Number((b as HTMLElement).dataset.unlockPlot)).msg);
-        this.openGardenModal(meta, onToast, onClose);
-      });
-    });
-    body.querySelectorAll('[data-plant-plot]').forEach((b) => {
-      b.addEventListener('click', () => {
-        const idx = Number((b as HTMLElement).dataset.plantPlot);
-        const sel = body.querySelector(`#seed-sel-${idx}`) as HTMLSelectElement;
-        if (sel) onToast(plantSeedInPlot(meta, idx, sel.value as PlantId).msg);
-        this.openGardenModal(meta, onToast, onClose);
-      });
-    });
-    body.querySelectorAll('[data-harvest-plot]').forEach((b) => {
-      b.addEventListener('click', () => {
-        onToast(harvestGardenPlot(meta, Number((b as HTMLElement).dataset.harvestPlot)).msg);
-        this.openGardenModal(meta, onToast, onClose);
-      });
-    });
-  }
-
-  openForgeModal(meta: MetaSave, onToast: (m: string) => void, onClose: () => void): void {
-    const matsBar = (Object.keys(MATERIALS) as MaterialId[])
-      .map((m) => `<span>${MATERIALS[m].icon}${MATERIALS[m].name}:${meta.materials[m]}</span>`)
-      .join(' · ');
-
-    const cards = ALL_WEAPON_IDS.map((wid) => {
-      const wd = WEAPONS[wid];
-      const unlocked = isWeaponForgeUnlocked(meta, wid);
-      const seen = meta.weaponsSeen[wid] ?? 0;
-      const need = wd.rarity === 'red' ? 1 : wd.rarity === 'white' || wd.rarity === 'green' ? 5 : 8;
-      const costStr = Object.entries(wd.forgeCost)
-        .map(([m, amt]) => `${MATERIALS[m as MaterialId].icon}${amt}`)
-        .join(' ');
-      return `
-        <div class="item-card ${meta.weaponsGoldFrame[wid] ? 'gold-frame' : ''}">
-          <div class="item-card-title" style="color:${RARITY_COLORS[wd.rarity]}">${wd.name}</div>
-          <div class="item-card-desc">${wd.desc}<br/>消耗：${costStr}</div>
-          <button class="px-btn ${unlocked ? 'primary' : ''}" data-forge="${wid}" ${unlocked ? '' : 'disabled'}>
-            ${unlocked ? '🔨 锻造带出门' : `拾取解锁 (${seen}/${need})`}
-          </button>
-        </div>
-      `;
-    }).join('');
-
-    const body = this.renderCard(
-      `🔨 武器锻造台（下局直接带进 1-1）`,
-      `<div style="font-size:12px;margin-bottom:10px;color:#ffd54f">${matsBar}</div><div class="grid-cards">${cards}</div>`,
-      onClose
-    );
-    body.querySelectorAll('[data-forge]').forEach((b) => {
-      b.addEventListener('click', () => {
-        onToast(forgeWeapon(meta, (b as HTMLElement).dataset.forge as WeaponId).msg);
-        this.openForgeModal(meta, onToast, onClose);
-      });
-    });
-  }
-
-  openStickerBenchModal(meta: MetaSave, onToast: (m: string) => void, onClose: () => void): void {
-    const eligible = STICKER_IDS.filter((id) => STICKERS[id].rarity === 'green' || STICKERS[id].rarity === 'blue');
-    const cards = eligible
-      .map((sid) => {
-        const s = STICKERS[sid];
-        const seen = meta.stickersSeen[sid] ?? 0;
-        const ok = seen >= 3;
-        return `
-          <div class="item-card">
-            <div class="item-card-title" style="color:${s.color}">🏷️ ${s.name}</div>
-            <div class="item-card-desc">${s.desc}</div>
-            <button class="px-btn ${ok ? 'primary' : ''}" data-pre="${sid}" ${ok ? '' : 'disabled'}>
-              ${ok ? '预印开局 (🧴×2)' : `发现解锁 (${seen}/3)`}
-            </button>
-          </div>
-        `;
-      })
-      .join('');
-    const body = this.renderCard(
-      `🏷️ 贴纸预印台（当前荧光胶水 🧴${meta.materials.glow_glue}）`,
-      `<div class="grid-cards">${cards}</div>`,
-      onClose
-    );
-    body.querySelectorAll('[data-pre]').forEach((b) => {
-      b.addEventListener('click', () => {
-        onToast(prePrintSticker(meta, (b as HTMLElement).dataset.pre as StickerId).msg);
-        this.openStickerBenchModal(meta, onToast, onClose);
-      });
-    });
-  }
-
-  openGachaModal(meta: MetaSave, onToast: (m: string) => void, onClose: () => void, lastMsg = ''): void {
-    const body = this.renderCard(
-      `🎰 客厅蓝币像素扭蛋机（蓝币 💎${meta.gems}）`,
-      `
-        <div class="item-card gold-frame" style="margin-bottom:12px;text-align:center">
-          <div style="font-size:34px">🎰</div>
-          <div style="margin:6px 0;font-weight:800;color:#ffd54f">${lastMsg || '单抽 200 蓝币 · 10 抽保底出出门神兵！小心恶作剧炸弹彩蛋！'}</div>
-          <div style="font-size:12px;color:#b0bec5">今日已抽：${meta.gachaPullsToday}/20 · 保底进度：${meta.gachaPity}/10</div>
-          <button class="px-btn primary" id="btn-pull-gacha" style="margin-top:10px">🎲 投币 200 蓝币摇一次！</button>
-        </div>
-      `,
-      onClose
-    );
-    body.querySelector('#btn-pull-gacha')?.addEventListener('click', () => {
-      const res = pullGacha(meta);
-      onToast(res.msg);
-      this.openGachaModal(meta, onToast, onClose, res.msg);
-    });
-  }
-
-  openDailyBoardModal(meta: MetaSave, onStartDaily: (factors: DailyFactorId[]) => void, onToast: (m: string) => void, onClose: () => void): void {
-    const today = todayDateString();
-    const factors = getDailyChallengeFactors(today, meta.dailySeedOffset);
-    const done = meta.dailyCompletedDay === today;
-    const cards = factors
-      .map((f) => {
-        const d = DAILY_FACTORS[f];
-        return `
-          <div class="item-card" style="border-color:${d.positive ? '#69f0ae' : '#ff5277'}">
-            <div class="item-card-title">${d.icon} ${d.name} (${d.positive ? '爽点' : '挑战'})</div>
-            <div class="item-card-desc">${d.desc}</div>
-          </div>
-        `;
-      })
-      .join('');
-
-    const body = this.renderCard(
-      `📋 每日挑战因子看板（${today}）`,
-      `
-        <div class="grid-cards">${cards}</div>
-        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="px-btn primary" id="btn-go-daily">🔥 接取挑战出发（首通 +1500💎）</button>
-          <button class="px-btn" id="btn-reroll-daily" ${meta.dailyRerollsUsed >= 2 ? 'disabled' : ''}>🎲 重随因子 (200💎 · 剩余${2 - meta.dailyRerollsUsed}次)</button>
-          ${done ? '<span style="color:#69f0ae;font-weight:800;align-self:center">✅ 今日挑战已通关！</span>' : ''}
-        </div>
-      `,
-      onClose
-    );
-
-    body.querySelector('#btn-go-daily')?.addEventListener('click', () => {
-      this.close();
-      onStartDaily(factors);
-    });
-    body.querySelector('#btn-reroll-daily')?.addEventListener('click', () => {
-      if (meta.gems < 200) {
-        onToast('蓝币不足（需 200 蓝币）');
-        return;
-      }
-      meta.gems -= 200;
-      meta.dailyRerollsUsed++;
-      meta.dailySeedOffset++;
-      saveMetaSave(meta);
-      onToast('🎲 已重新刷新今日 4 项挑战因子！');
-      this.openDailyBoardModal(meta, onStartDaily, onToast, onClose);
-    });
-  }
-
-  openCellarModal(meta: MetaSave, onClose: () => void, tab: 'weapons' | 'stickers' | 'bosses' | 'ach' = 'weapons'): void {
+  openHeroesAndPetsHub(meta: MetaSave, onToast: (m: string) => void, onClose: () => void, tab: 'heroes' | 'pets' = 'heroes'): void {
     let content = '';
-    if (tab === 'weapons') {
-      const seenCount = Object.keys(meta.weaponsSeen).length;
-      const goldCount = Object.keys(meta.weaponsGoldFrame).length;
-      content = `<div style="margin-bottom:8px;font-size:12px">武器图鉴：${seenCount}/${ALL_WEAPON_IDS.length} · 通关金框：${goldCount}</div><div class="grid-cards">` +
-        ALL_WEAPON_IDS.map((id) => {
-          const w = WEAPONS[id];
-          const seen = (meta.weaponsSeen[id] ?? 0) > 0;
-          const gold = Boolean(meta.weaponsGoldFrame[id]);
-          return `
-            <div class="item-card ${gold ? 'gold-frame' : ''}">
-              <div class="item-card-title" style="color:${seen ? RARITY_COLORS[w.rarity] : '#607d8b'}">${seen ? w.name : '??? 未发现'} ${gold ? '🏆' : ''}</div>
-              <div class="item-card-desc">${seen ? `${w.desc} (已捡 ${meta.weaponsSeen[id]} 次)` : '探索地牢解锁此脑洞武器'}</div>
+    if (tab === 'heroes') {
+      content = `<div class="grid-cards">${HERO_LIST.map((h) => {
+        const unlocked = meta.unlockedHeroes.includes(h.id);
+        const selected = meta.selectedHero === h.id;
+        const lv = meta.heroLevels[h.id] ?? 1;
+        const stats = getHeroStatsAtLevel(h.id, lv);
+        const upCost = lv < 7 ? HERO_UPGRADE_COSTS[lv] : 0;
+        return `
+          <div class="item-card ${selected ? 'gold-frame' : ''}">
+            <div class="item-card-title" style="color:${h.color}">${h.name} · Lv.${lv}/7 ${selected ? '✅' : ''}</div>
+            <div class="item-card-desc">血${stats.maxHp}/盾${stats.maxShield}/蓝${stats.maxMana}<br/><b>${h.skillName}</b>：${h.skillDesc}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="px-btn ${selected ? 'ok' : 'primary'}" data-sel-hero="${h.id}">${selected ? '出战中' : unlocked ? '选择' : h.unlockCost < 0 ? '通关解锁' : `解锁(${h.unlockCost}💎)`}</button>
+              ${unlocked && lv < 7 ? `<button class="px-btn" data-up-hero="${h.id}">⬆️升级(${upCost}💎)</button>` : ''}
             </div>
-          `;
-        }).join('') + `</div>`;
-    } else if (tab === 'stickers') {
-      content = `<div class="grid-cards">` +
-        STICKER_IDS.map((id) => {
-          const s = STICKERS[id];
-          const seen = (meta.stickersSeen[id] ?? 0) > 0;
-          return `
-            <div class="item-card">
-              <div class="item-card-title" style="color:${seen ? s.color : '#607d8b'}">${seen ? s.name : '??? 未发现贴纸'}</div>
-              <div class="item-card-desc">${seen ? s.desc : '在宝箱/工坊/奇遇中发现'}</div>
-            </div>
-          `;
-        }).join('') + `</div>`;
-    } else if (tab === 'bosses') {
-      const bosses = [
-        { k: 'boss_goblin_priest', n: '1-5 哥布林大祭司' },
-        { k: 'boss_yeti_king', n: '1-5 雪山大猿王' },
-        { k: 'boss_skeleton_lord', n: '2-5 骷髅霸主' },
-        { k: 'boss_steam_mech', n: '2-5 蒸汽重装机甲' },
-        { k: 'boss_twin_dragon', n: '3-5 熔岩双头龙' },
-        { k: 'boss_glitch_lord', n: '3-5 错乱程序主宰' },
-        { k: 'boss_goose_king', n: '隐藏彩蛋 · 物业经理大鹅王' }
-      ];
-      content = `<div class="grid-cards">` +
-        bosses.map((b) => {
-          const kills = meta.bossKills[b.k] ?? 0;
-          return `
-            <div class="item-card ${kills > 0 ? 'gold-frame' : ''}">
-              <div class="item-card-title">👑 ${b.n}</div>
-              <div class="item-card-desc">历史击杀：<b>${kills} 次</b></div>
-            </div>
-          `;
-        }).join('') + `</div>`;
+          </div>
+        `;
+      }).join('')}</div>`;
     } else {
-      content = `<div class="grid-cards">` +
-        ACHIEVEMENTS.map((a) => {
-          const done = Boolean(meta.achievements[a.id]);
-          return `
-            <div class="item-card ${done ? 'gold-frame' : ''}">
-              <div class="item-card-title">${done ? '✅' : '🔒'} ${a.title} (+${a.rewardGems}💎)</div>
-              <div class="item-card-desc">${a.desc}</div>
-            </div>
-          `;
-        }).join('') + `</div>`;
+      content = `<div class="grid-cards">${PET_LIST.map((p) => {
+        const unlocked = meta.unlockedPets.includes(p.id);
+        const selected = meta.selectedPet === p.id;
+        return `
+          <div class="item-card ${selected ? 'gold-frame' : ''}">
+            <div class="item-card-title" style="color:${p.color}">🐾 ${p.name}</div>
+            <div class="item-card-desc">${p.desc}<br/><span style="color:#ffd54f">${unlocked ? '已拥有' : p.unlockHint}</span></div>
+            <button class="px-btn ${selected ? 'ok' : 'primary'}" data-pet="${p.id}">${selected ? '✅ 携宠中' : unlocked ? '携带' : p.unlockCost > 0 ? `解锁(${p.unlockCost}💎)` : '成就解锁'}</button>
+          </div>
+        `;
+      }).join('')}</div>`;
     }
 
     const body = this.renderCard(
-      '🏆 地下收藏陈列室',
+      `🧙 英雄与宠物 · 蓝币 💎${meta.gems}`,
       `
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-          <button class="px-btn ${tab === 'weapons' ? 'primary' : ''}" data-ctab="weapons">⚔️ 37武器墙</button>
-          <button class="px-btn ${tab === 'stickers' ? 'primary' : ''}" data-ctab="stickers">🏷️ 24贴纸墙</button>
-          <button class="px-btn ${tab === 'bosses' ? 'primary' : ''}" data-ctab="bosses">👑 7大Boss奖杯</button>
-          <button class="px-btn ${tab === 'ach' ? 'primary' : ''}" data-ctab="ach">🏅 整活成就</button>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="px-btn ${tab === 'heroes' ? 'primary' : ''}" data-htab="heroes">🧙 6 位英雄</button>
+          <button class="px-btn ${tab === 'pets' ? 'primary' : ''}" data-htab="pets">🐾 6 只宠物</button>
         </div>
         ${content}
       `,
       onClose
     );
-    body.querySelectorAll('[data-ctab]').forEach((b) => {
-      b.addEventListener('click', () => {
-        this.openCellarModal(meta, onClose, (b as HTMLElement).dataset.ctab as 'weapons' | 'stickers' | 'bosses' | 'ach');
-      });
-    });
+    body.querySelectorAll('[data-htab]').forEach((b) => b.addEventListener('click', () => this.openHeroesAndPetsHub(meta, onToast, onClose, (b as HTMLElement).dataset.htab as 'heroes' | 'pets')));
+    body.querySelectorAll('[data-sel-hero]').forEach((b) => b.addEventListener('click', () => { onToast(unlockOrSelectHero(meta, (b as HTMLElement).dataset.selHero as HeroId).msg); this.openHeroesAndPetsHub(meta, onToast, onClose, 'heroes'); }));
+    body.querySelectorAll('[data-up-hero]').forEach((b) => b.addEventListener('click', () => { onToast(upgradeHero(meta, (b as HTMLElement).dataset.upHero as HeroId).msg); this.openHeroesAndPetsHub(meta, onToast, onClose, 'heroes'); }));
+    body.querySelectorAll('[data-pet]').forEach((b) => b.addEventListener('click', () => { onToast(unlockOrSelectPet(meta, (b as HTMLElement).dataset.pet as typeof meta.selectedPet).msg); this.openHeroesAndPetsHub(meta, onToast, onClose, 'pets'); }));
   }
 
-  openStatsAndSaveModal(meta: MetaSave, onImported: (m: MetaSave) => void, onToast: (m: string) => void, onClose: () => void): void {
-    const code = exportSaveCode(meta);
+  /** Unified Camp Progression Hub: Garden / Forge / Sticker Pre-Print / Gacha / Daily */
+  openCampHub(
+    meta: MetaSave,
+    onStartDaily: (f: DailyFactorId[]) => void,
+    onToast: (m: string) => void,
+    onClose: () => void,
+    tab: 'garden' | 'forge' | 'sticker' | 'gacha' | 'daily' = 'garden',
+    lastGachaMsg = ''
+  ): void {
+    let content = '';
+    if (tab === 'garden') {
+      const seedOpts = (Object.keys(PLANTS) as PlantId[]).filter((pid) => (meta.seeds[pid] ?? 0) > 0).map((pid) => `<option value="${pid}">${PLANTS[pid].icon} ${PLANTS[pid].name} (余${meta.seeds[pid]})</option>`).join('');
+      content = `<div class="grid-cards">${meta.garden.map((plot, idx) => {
+        if (!plot.unlocked) {
+          const cost = 600 + (idx - 3) * 400;
+          return `<div class="item-card"><div class="item-card-title">🔒 第 ${idx + 1} 块花盆</div><div class="item-card-desc">开垦新花盆种天赋植物</div><button class="px-btn primary" data-unlock-plot="${idx}">开垦 (${cost}💎)</button></div>`;
+        }
+        if (!plot.plantId) {
+          return `<div class="item-card"><div class="item-card-title">🟫 第 ${idx + 1} 块空花盆</div>${seedOpts ? `<select id="seed-sel-${idx}" style="padding:4px;border-radius:4px;background:#1b1629;color:#fff">${seedOpts}</select><button class="px-btn ok" data-plant-plot="${idx}">🌱 种下浇水</button>` : '<div class="item-card-desc">暂无种子</div>'}</div>`;
+        }
+        const def = PLANTS[plot.plantId];
+        const mature = isGardenPlotMature(plot);
+        return `<div class="item-card ${mature ? 'gold-frame' : ''}"><div class="item-card-title">${def.icon} ${def.name}</div><div class="item-card-desc">${def.desc}<br/>${mature ? '<b style="color:#69f0ae">✨ 已成熟！</b>' : `进度 ${plot.runsSincePlanted}/2 局`}</div><button class="px-btn ${mature ? 'ok' : ''}" data-harvest-plot="${idx}" ${mature ? '' : 'disabled'}>${mature ? '🌾 收获' : '生长中'}</button></div>`;
+      }).join('')}</div>`;
+    } else if (tab === 'forge') {
+      const matsBar = (Object.keys(MATERIALS) as MaterialId[]).map((m) => `${MATERIALS[m].icon}${meta.materials[m]}`).join(' · ');
+      content = `<div style="font-size:12px;margin-bottom:8px;color:#ffd54f">材料：${matsBar}</div><div class="grid-cards">${ALL_WEAPON_IDS.map((wid) => {
+        const wd = WEAPONS[wid];
+        const unlocked = isWeaponForgeUnlocked(meta, wid);
+        const seen = meta.weaponsSeen[wid] ?? 0;
+        const need = wd.rarity === 'red' ? 1 : wd.rarity === 'white' || wd.rarity === 'green' ? 5 : 8;
+        const costStr = Object.entries(wd.forgeCost).map(([m, amt]) => `${MATERIALS[m as MaterialId].icon}${amt}`).join(' ');
+        return `<div class="item-card"><div class="item-card-title" style="color:${RARITY_COLORS[wd.rarity]}">${wd.name}</div><div class="item-card-desc">${wd.desc}<br/>耗材：${costStr}</div><button class="px-btn ${unlocked ? 'primary' : ''}" data-forge="${wid}" ${unlocked ? '' : 'disabled'}>${unlocked ? '🔨 锻造带出门' : `拾取解锁(${seen}/${need})`}</button></div>`;
+      }).join('')}</div>`;
+    } else if (tab === 'sticker') {
+      const eligible = STICKER_IDS.filter((id) => STICKERS[id].rarity === 'green' || STICKERS[id].rarity === 'blue');
+      content = `<div style="font-size:12px;margin-bottom:8px;color:#69f0ae">荧光胶水 🧴${meta.materials.glow_glue}（消耗2瓶预印开局贴纸）</div><div class="grid-cards">${eligible.map((sid) => {
+        const s = STICKERS[sid];
+        const seen = meta.stickersSeen[sid] ?? 0;
+        return `<div class="item-card"><div class="item-card-title" style="color:${s.color}">🏷️ ${s.name}</div><div class="item-card-desc">${s.desc}</div><button class="px-btn ${seen >= 3 ? 'primary' : ''}" data-pre="${sid}" ${seen >= 3 ? '' : 'disabled'}>${seen >= 3 ? '预印开局 (🧴×2)' : `发现解锁(${seen}/3)`}</button></div>`;
+      }).join('')}</div>`;
+    } else if (tab === 'gacha') {
+      content = `<div class="item-card gold-frame" style="text-align:center"><div style="font-size:34px">🎰</div><div style="margin:6px 0;font-weight:800;color:#ffd54f">${lastGachaMsg || '200蓝币单抽 · 10抽保底出出门神兵！'}</div><div style="font-size:12px;color:#b0bec5">今日：${meta.gachaPullsToday}/20 · 保底：${meta.gachaPity}/10</div><button class="px-btn primary" id="btn-pull-gacha" style="margin-top:10px">🎲 摇一次 (200💎)</button></div>`;
+    } else {
+      const today = todayDateString();
+      const factors = getDailyChallengeFactors(today, meta.dailySeedOffset);
+      content = `<div class="grid-cards">${factors.map((f) => `<div class="item-card" style="border-color:${DAILY_FACTORS[f].positive ? '#69f0ae' : '#ff5277'}"><div class="item-card-title">${DAILY_FACTORS[f].icon} ${DAILY_FACTORS[f].name}</div><div class="item-card-desc">${DAILY_FACTORS[f].desc}</div></div>`).join('')}</div><div style="margin-top:10px;display:flex;gap:8px"><button class="px-btn primary" id="btn-go-daily">🔥 接取每日挑战出发</button><button class="px-btn" id="btn-reroll-daily" ${meta.dailyRerollsUsed >= 2 ? 'disabled' : ''}>🎲 重随 (200💎)</button></div>`;
+    }
+
     const body = this.renderCard(
-      '📺 复古电视 · 战绩与离线存档备份码',
+      `⛺ 营地养成中心 · 蓝币 💎${meta.gems}`,
       `
-        <div class="item-card" style="margin-bottom:10px">
-          <div>总出征次数：<b>${meta.runsPlayed}</b> · 通关次数：<b>${meta.runsWon}</b> · 最高抵达层数：<b>第 ${meta.bestFloor} 层</b></div>
-          <div style="font-size:12px;color:#b0bec5;margin-top:4px">换手机或重装 APK 前，复制下方存档码保存，即可零损恢复全部蓝币/英雄/图鉴！</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+          <button class="px-btn ${tab === 'garden' ? 'primary' : ''}" data-ct="garden">🌱 魔法花园</button>
+          <button class="px-btn ${tab === 'forge' ? 'primary' : ''}" data-ct="forge">🔨 锻造台</button>
+          <button class="px-btn ${tab === 'sticker' ? 'primary' : ''}" data-ct="sticker">🏷️ 贴纸预印</button>
+          <button class="px-btn ${tab === 'gacha' ? 'primary' : ''}" data-ct="gacha">🎰 扭蛋机</button>
+          <button class="px-btn ${tab === 'daily' ? 'primary' : ''}" data-ct="daily">📋 每日挑战</button>
         </div>
-        <textarea id="save-code-box" rows="3" style="width:100%;background:#120e1a;color:#69f0ae;border:1.5px solid #5c4f7d;border-radius:6px;padding:8px;font-size:11px">${code}</textarea>
-        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="px-btn primary" id="btn-copy-save">📋 复制当前存档码</button>
-          <button class="px-btn ok" id="btn-import-save">📥 从文本框导入恢复存档</button>
-        </div>
+        ${content}
       `,
       onClose
     );
 
+    body.querySelectorAll('[data-ct]').forEach((b) => b.addEventListener('click', () => this.openCampHub(meta, onStartDaily, onToast, onClose, (b as HTMLElement).dataset.ct as typeof tab)));
+    body.querySelectorAll('[data-unlock-plot]').forEach((b) => b.addEventListener('click', () => { onToast(unlockGardenPlot(meta, Number((b as HTMLElement).dataset.unlockPlot)).msg); this.openCampHub(meta, onStartDaily, onToast, onClose, 'garden'); }));
+    body.querySelectorAll('[data-plant-plot]').forEach((b) => b.addEventListener('click', () => { const idx = Number((b as HTMLElement).dataset.plantPlot); const sel = body.querySelector(`#seed-sel-${idx}`) as HTMLSelectElement; if (sel) onToast(plantSeedInPlot(meta, idx, sel.value as PlantId).msg); this.openCampHub(meta, onStartDaily, onToast, onClose, 'garden'); }));
+    body.querySelectorAll('[data-harvest-plot]').forEach((b) => b.addEventListener('click', () => { onToast(harvestGardenPlot(meta, Number((b as HTMLElement).dataset.harvestPlot)).msg); this.openCampHub(meta, onStartDaily, onToast, onClose, 'garden'); }));
+    body.querySelectorAll('[data-forge]').forEach((b) => b.addEventListener('click', () => { onToast(forgeWeapon(meta, (b as HTMLElement).dataset.forge as WeaponId).msg); this.openCampHub(meta, onStartDaily, onToast, onClose, 'forge'); }));
+    body.querySelectorAll('[data-pre]').forEach((b) => b.addEventListener('click', () => { onToast(prePrintSticker(meta, (b as HTMLElement).dataset.pre as StickerId).msg); this.openCampHub(meta, onStartDaily, onToast, onClose, 'sticker'); }));
+    body.querySelector('#btn-pull-gacha')?.addEventListener('click', () => { const r = pullGacha(meta); onToast(r.msg); this.openCampHub(meta, onStartDaily, onToast, onClose, 'gacha', r.msg); });
+    body.querySelector('#btn-go-daily')?.addEventListener('click', () => { this.close(); onStartDaily(getDailyChallengeFactors(todayDateString(), meta.dailySeedOffset)); });
+    body.querySelector('#btn-reroll-daily')?.addEventListener('click', () => { if (meta.gems < 200) { onToast('蓝币不足'); return; } meta.gems -= 200; meta.dailyRerollsUsed++; meta.dailySeedOffset++; saveMetaSave(meta); this.openCampHub(meta, onStartDaily, onToast, onClose, 'daily'); });
+  }
+
+  /** Unified Cellar + Controls + Save Backup Hub */
+  openCellarAndSettingsHub(
+    meta: MetaSave,
+    opts: { onImported: (m: MetaSave) => void; onApplyControls: () => void; onToast: (m: string) => void; onClose: () => void },
+    tab: 'weapons' | 'stickers' | 'bosses' | 'ach' | 'save' = 'weapons'
+  ): void {
+    let content = '';
+    if (tab === 'weapons') {
+      content = `<div class="grid-cards">${ALL_WEAPON_IDS.map((id) => {
+        const w = WEAPONS[id];
+        const seen = (meta.weaponsSeen[id] ?? 0) > 0;
+        return `<div class="item-card ${meta.weaponsGoldFrame[id] ? 'gold-frame' : ''}"><div class="item-card-title" style="color:${seen ? RARITY_COLORS[w.rarity] : '#607d8b'}">${seen ? w.name : '??? 未发现'} ${meta.weaponsGoldFrame[id] ? '🏆' : ''}</div><div class="item-card-desc">${seen ? w.desc : '探索新地图解锁'}</div></div>`;
+      }).join('')}</div>`;
+    } else if (tab === 'stickers') {
+      content = `<div class="grid-cards">${STICKER_IDS.map((id) => {
+        const s = STICKERS[id];
+        const seen = (meta.stickersSeen[id] ?? 0) > 0;
+        return `<div class="item-card"><div class="item-card-title" style="color:${seen ? s.color : '#607d8b'}">${seen ? s.name : '???'}</div><div class="item-card-desc">${seen ? s.desc : '探索地牢解锁'}</div></div>`;
+      }).join('')}</div>`;
+    } else if (tab === 'bosses') {
+      const bosses = [
+        { k: 'boss_goblin_priest', n: '哥布林大祭司' },
+        { k: 'boss_yeti_king', n: '雪山大猿王' },
+        { k: 'boss_skeleton_lord', n: '骷髅霸主' },
+        { k: 'boss_steam_mech', n: '蒸汽重装机甲' },
+        { k: 'boss_twin_dragon', n: '熔岩双头龙' },
+        { k: 'boss_glitch_lord', n: '错乱程序主宰' },
+        { k: 'boss_goose_king', n: '隐藏 · 物业经理大鹅王' }
+      ];
+      content = `<div class="grid-cards">${bosses.map((b) => `<div class="item-card ${(meta.bossKills[b.k] ?? 0) > 0 ? 'gold-frame' : ''}"><div class="item-card-title">👑 ${b.n}</div><div class="item-card-desc">击杀次数：<b>${meta.bossKills[b.k] ?? 0}</b></div></div>`).join('')}</div>`;
+    } else if (tab === 'ach') {
+      content = `<div class="grid-cards">${ACHIEVEMENTS.map((a) => `<div class="item-card ${meta.achievements[a.id] ? 'gold-frame' : ''}"><div class="item-card-title">${meta.achievements[a.id] ? '✅' : '🔒'} ${a.title} (+${a.rewardGems}💎)</div><div class="item-card-desc">${a.desc}</div></div>`).join('')}</div>`;
+    } else {
+      const code = exportSaveCode(meta);
+      content = `
+        <div class="item-card" style="margin-bottom:10px">
+          <div>出征：<b>${meta.runsPlayed}</b> · 通关：<b>${meta.runsWon}</b> · 最远：<b>第 ${meta.bestFloor} 区</b></div>
+          <div style="margin-top:8px"><button class="px-btn primary" id="btn-open-ctrl">🎮 自定义键位 / 触屏按钮位置与大小</button></div>
+        </div>
+        <textarea id="save-code-box" rows="3" style="width:100%;background:#120e1a;color:#69f0ae;border:1.5px solid #5c4f7d;border-radius:6px;padding:8px;font-size:11px">${code}</textarea>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="px-btn primary" id="btn-copy-save">📋 复制存档码</button>
+          <button class="px-btn ok" id="btn-import-save">📥 导入恢复存档</button>
+        </div>
+      `;
+    }
+
+    const body = this.renderCard(
+      '🏆 图鉴 · 自定义键位 · 存档备份',
+      `
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+          <button class="px-btn ${tab === 'weapons' ? 'primary' : ''}" data-ctab="weapons">⚔️ 37武器</button>
+          <button class="px-btn ${tab === 'stickers' ? 'primary' : ''}" data-ctab="stickers">🏷️ 24贴纸</button>
+          <button class="px-btn ${tab === 'bosses' ? 'primary' : ''}" data-ctab="bosses">👑 7大Boss</button>
+          <button class="px-btn ${tab === 'ach' ? 'primary' : ''}" data-ctab="ach">🏅 成就</button>
+          <button class="px-btn ${tab === 'save' ? 'primary' : ''}" data-ctab="save">🎮 键位与存档</button>
+        </div>
+        ${content}
+      `,
+      opts.onClose
+    );
+
+    body.querySelectorAll('[data-ctab]').forEach((b) => b.addEventListener('click', () => this.openCellarAndSettingsHub(meta, opts, (b as HTMLElement).dataset.ctab as typeof tab)));
+    body.querySelector('#btn-open-ctrl')?.addEventListener('click', () => {
+      this.openControlsEditor(meta, opts.onApplyControls, opts.onToast, () => this.openCellarAndSettingsHub(meta, opts, 'save'));
+    });
     body.querySelector('#btn-copy-save')?.addEventListener('click', () => {
-      navigator.clipboard?.writeText(code).catch(() => {});
-      onToast('📋 存档备份码已复制！');
+      navigator.clipboard?.writeText(exportSaveCode(meta)).catch(() => {});
+      opts.onToast('📋 存档码已复制！');
     });
     body.querySelector('#btn-import-save')?.addEventListener('click', () => {
       const val = (body.querySelector('#save-code-box') as HTMLTextAreaElement).value;
       const imported = importSaveCode(val);
-      if (imported) {
-        onImported(imported);
-        onToast('✅ 存档已成功导入恢复！');
-        this.close();
-        onClose();
-      } else {
-        onToast('❌ 存档码格式无效');
-      }
+      if (imported) { opts.onImported(imported); opts.onToast('✅ 存档导入成功！'); this.close(); opts.onClose(); }
+      else opts.onToast('❌ 存档码无效');
     });
   }
-
-  openLanTerminalModal(onClose: () => void): void {
-    this.renderCard(
-      '📡 Wi-Fi 局域网双人联机终端（架构已预留）',
-      `
-        <div class="item-card">
-          <div class="item-card-title" style="color:#00e5ff">主机权威解耦架构就绪</div>
-          <div class="item-card-desc">
-            本作仿真核（<code>src/sim/world.ts</code>）已完全采用多玩家 <code>players</code> 字典、<code>InputCommand</code> 指令队列、确定性 <code>SeededRNG</code> 及 <code>LanTransport</code> 接口契约。<br/><br/>
-            当前为单机离线完整版（零流量随时畅玩）；后续只需接入局域网 WebSocket 房间服务，即可与同 Wi-Fi 好友双人开黑魔改！
-          </div>
-        </div>
-      `,
-      onClose
-    );
-  }
 }
+
+export { PETS };

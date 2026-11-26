@@ -1,17 +1,16 @@
-/**
- * Procedural 16x16 / 24x24 Outlined Pixel Sprite Generator.
- * Generates crisp offscreen pixel-art canvases with 1px dark outlines,
- * plus supports seamless drop-in PNG spritesheet overrides later.
- */
+import { HeroId, WeaponId } from '../sim/types';
 
+/**
+ * High-Charm Outlined Pixel Sprite Generator (Multi-tone shading + distinct silhouettes).
+ */
 const spriteCache = new Map<string, HTMLCanvasElement>();
 
-function makeSprite(grid: string[], palette: Record<string, string>, scale = 1): HTMLCanvasElement {
+function makeSprite(grid: string[], palette: Record<string, string>): HTMLCanvasElement {
   const h = grid.length;
   const w = grid[0].length;
   const c = document.createElement('canvas');
-  c.width = w * scale;
-  c.height = h * scale;
+  c.width = w;
+  c.height = h;
   const ctx = c.getContext('2d')!;
   ctx.imageSmoothingEnabled = false;
   for (let y = 0; y < h; y++) {
@@ -22,45 +21,143 @@ function makeSprite(grid: string[], palette: Record<string, string>, scale = 1):
       const col = palette[ch];
       if (!col) continue;
       ctx.fillStyle = col;
-      ctx.fillRect(x * scale, y * scale, scale, scale);
+      ctx.fillRect(x, y, 1, 1);
     }
   }
   return c;
 }
 
-const HERO_BASE_GRID = [
-  '....OOOOOOOO....',
-  '...OAAAAAAAAO...',
-  '..OAAAHHHHAAAO..',
-  '..OAAAAAAAAAAO..',
-  '..OOSSSSSSSSOO..',
-  '..OSWOSWOSWSSO..',
-  '..OSSSSSSSSSSO..',
-  '...OCCCCCCCCO...',
-  '..OCCBBBBBBCCO..',
-  '..OCCBBBBBBCCO..',
-  '..OOCBBBBBBCOO..',
-  '...OOBBBBBBOO...',
-  '...OOBBOOBBOO...',
-  '...OOBBOOBBOO...',
-  '...OO..OO..OO...',
-  '................'
-];
+const HERO_GRIDS: Record<HeroId, string[]> = {
+  // Steel bucket helmet with specular shine + visor slit + knight cape
+  bucket_knight: [
+    '....OOOOOOOO....',
+    '...OAAHHHHAAO...',
+    '...OAAAAAAAAO...',
+    '...OAADDDDAAO...',
+    '...OAOOKKOOAO...',
+    '...OAAWWWWAAO...',
+    '...OAAAAAAAAO...',
+    '..OOCCCCCCCCOO..',
+    '.OCBBBBBBBBBBCO.',
+    '.OCBBBYYYYBBBCO.',
+    '.OOCBBBBBBBBCOO.',
+    '...OOBBBBBBOO...',
+    '...OODDOODDOO...',
+    '...OODDOODDOO...',
+    '...OO..OO..OO...',
+    '................'
+  ],
+  // Brass workshop goggles + tall cap + sticker apron
+  sticker_smith: [
+    '.....OOOOOO.....',
+    '....OAAHHAAO....',
+    '...OAAAAAAAAO...',
+    '..OOYYOYYOYYOO..',
+    '..OOGGOOOGGOOO..',
+    '..OOSSSSSSSSOO..',
+    '...OSSSSSSSSO...',
+    '..OOBBBBBBBBOO..',
+    '.OOBBCCCCCCBBOO.',
+    '.OOBBCYYYYCBBOO.',
+    '..OOBBCCCCBBOO..',
+    '...OOBBBBBBOO...',
+    '...OODDOODDOO...',
+    '...OO..OO..OO...',
+    '................',
+    '................'
+  ],
+  // Pointed black cat ears + bright eyes + flowing red scarf
+  ranger_cat: [
+    '..OO........OO..',
+    '..OAO......OAO..',
+    '..OAAOOOOOOAAO..',
+    '..OAAAAAAAAAAO..',
+    '..OAAYYAAYYAAO..',
+    '..OAAKKAAKKAAO..',
+    '...OAAAPPAAAO...',
+    '..OOCCCCCCCCOO..',
+    '.OCCCCCCCCCCCCO.',
+    '..OOBBBBBBBBOO..',
+    '...OOBBBBBBOO...',
+    '...OOBBOOBBOO...',
+    '...OODDOODDOO...',
+    '...OO..OO..OO...',
+    '................',
+    '................'
+  ],
+  // Hooded alchemist + glowing emerald goggles + lab coat
+  alchemist_quirk: [
+    '.....OOOOOO.....',
+    '....OAAAAAAO....',
+    '...OAAHHHHAAO...',
+    '..OAAAAAAAAAAO..',
+    '..OADGGDDGGDAO..',
+    '..OADGGDDGGDAO..',
+    '...OADDDDDDAO...',
+    '..OOBBBBBBBBOO..',
+    '.OOBBCCCCCCBBOO.',
+    '.OOBBCGGGGCBBOO.',
+    '..OOBBBBBBBBOO..',
+    '...OOBBOOBBOO...',
+    '...OODDOODDOO...',
+    '...OO..OO..OO...',
+    '................',
+    '................'
+  ],
+  // Floating golden halo + cozy robe
+  slacker_priest: [
+    '....OYYYYYYO....',
+    '....OOOOOOOO....',
+    '...OAAHHHHAAO...',
+    '..OAAAAAAAAAAO..',
+    '..OOSSSSSSSSOO..',
+    '..OSSKSSSSKSSO..',
+    '..OSSSSSSSSSSO..',
+    '..OOBBBBBBBBOO..',
+    '.OOBBCCCCCCBBOO.',
+    '.OOBBCYYYYCBBOO.',
+    '.OOBBCCCCCCBBOO.',
+    '..OOBBBBBBBBOO..',
+    '...OOBBOOBBOO...',
+    '...OO..OO..OO...',
+    '................',
+    '................'
+  ],
+  // Horned samurai crest + intense eyes + dark haori
+  blade_ashura: [
+    '..OY........YO..',
+    '..OYYO....OYYO..',
+    '...OAAOOOOAAO...',
+    '..OAAHHHHHHAAO..',
+    '..OOSSSSSSSSOO..',
+    '..OSSRSSSSRSSO..',
+    '...OSSSSSSSSO...',
+    '..OOCCCCCCCCOO..',
+    '.OCBBBBBBBBBBCO.',
+    '.OCBBCYYYYCBBCO.',
+    '..OOBBBBBBBBOO..',
+    '...OOBBOOBBOO...',
+    '...OODDOODDOO...',
+    '...OO..OO..OO...',
+    '................',
+    '................'
+  ]
+};
 
 const PET_GRID = [
   '................',
   '................',
-  '....OO....OO....',
+  '...OO......OO...',
+  '..OAAO....OAAO..',
+  '..OAAOOOOOOAAO..',
+  '.OAAHHAAAAHHAAO.',
+  '.OAAWAAAAAAWAAO.',
+  '.OAAKAAKKAAKAAO.',
+  '.OAAAAAPPPAAAAO.',
+  '..OAAABBBBAAAO..',
+  '..OAAAAAAAAAAO..',
   '...OAAO..OAAO...',
-  '...OAAAAAAAAO...',
-  '..OAAWAAAWAAAO..',
-  '..OAAKAAAKAAAO..',
-  '..OAAAAPPAAAAO..',
-  '...OAAAAAAAAO...',
-  '...OAAABBBAAO...',
-  '...OAAAAAAAAO...',
-  '....OO....OO....',
-  '................',
+  '...OOO....OOO...',
   '................',
   '................',
   '................'
@@ -68,16 +165,16 @@ const PET_GRID = [
 
 const GOBLIN_GRID = [
   '................',
-  '..OO........OO..',
-  '.OAAOOOOOOOOAAO.',
-  '..OAAAAAAAAAAO..',
-  '..OAAARAAARAAO..',
-  '..OAAAAAAAAAAO..',
-  '...OAAWWWWAAO...',
-  '...OBBBBBBBBO...',
-  '..OBBCCCCCCBBO..',
-  '..OBBCCCCCCBBO..',
-  '...OBBBBBBBBO...',
+  '.OO..........OO.',
+  'OAAOOOOOOOOOOAAO',
+  '.OAAHHHHHHHHAAO.',
+  '.OAAARAAAARAAAO.',
+  '.OAAAAAAAAAAAAO.',
+  '..OAAWWWWWWAAO..',
+  '..OOBBBBBBBBOO..',
+  '.OBBBCCCCCCBBBO.',
+  '.OBBBCYYYYCBBBO.',
+  '..OOBBBBBBBBOO..',
   '...OOBO..OBOO...',
   '...OOO....OOO...',
   '................',
@@ -88,16 +185,16 @@ const GOBLIN_GRID = [
 const BOSS_GRID = [
   '....OO..OO..OO....',
   '...OYYOOYYOOYYO...',
-  '..OYYYYYYYYYYYYO..',
+  '..OYYHHYYYYHHYYO..',
   '..OAAAAAAAAAAAAO..',
   '.OAAARRAAAARRAAAO.',
-  '.OAAARRAAAARRAAAO.',
+  '.OAAAYRAAAAYRAAAO.',
   '.OAAAAAAAAAAAAAAO.',
   '.OAAAWWWWWWWWAAAO.',
   '..OAAAAAAAAAAAAO..',
   '.OOBBBBBBBBBBBBOO.',
   'OOBBCCCCCCCCCCBBOO',
-  'OOBBCCCCCCCCCCBBOO',
+  'OOBBCYYYYYYYYCBBOO',
   'OOBBBBBBBBBBBBBBOO',
   '.OOBBBBBBBBBBBBOO.',
   '..OOBBBO..OBBBOO..',
@@ -142,18 +239,141 @@ const DUCK_GRID = [
   '................'
 ];
 
-export function getHeroSprite(color: string, accent: string, flash = false): HTMLCanvasElement {
-  const key = `hero_${color}_${accent}_${flash}`;
+// Crisp 16x10 pixel weapon sprites!
+const WEAPON_SHAPES: Record<string, string[]> = {
+  fish: [
+    '................',
+    '......OOOOOO....',
+    '..OO.OAAHHAAOO..',
+    '.OAAOAAAAAAAKAO.',
+    '.OAAAAAAAAAAAAO.',
+    '..OO.OAAAAAAOO..',
+    '......OOOOOO....',
+    '................'
+  ],
+  chicken: [
+    '..........OOO...',
+    '.........OYYYO..',
+    '..OOOOOO.OYKYRO.',
+    '.OYYYYYYOOYYYOO.',
+    '.OYYYYYYYYYYO...',
+    '..OOOOOOOOOO....',
+    '................',
+    '................'
+  ],
+  pan: [
+    '........OOOOO...',
+    '.......OYYHHYO..',
+    '.OOOOOOYYYYYYO..',
+    '.ODDDDOYYYYYYO..',
+    '.OOOOOOYYYYYYO..',
+    '.......OYYYYYO..',
+    '........OOOOO...',
+    '................'
+  ],
+  sword: [
+    '....O...........',
+    '...OYO..OOOOOOO.',
+    '.OOYYOOAAHHHHAAO',
+    '.ODYYOAAAAAAAAAO',
+    '...OYO..OOOOOOO.',
+    '....O...........',
+    '................',
+    '................'
+  ],
+  staff: [
+    '..........OOOO..',
+    '.........OAHHAO.',
+    '.OOOOOOOOOAAAAO.',
+    '.ODDDDDDDOAAAAO.',
+    '.OOOOOOOOOAAAAO.',
+    '.........OAAAAO.',
+    '..........OOOO..',
+    '................'
+  ],
+  gatling: [
+    '..OOOOOOOOOOOO..',
+    '.OAAHHHHAAAAAAO.',
+    '.OADDDDDDDDDAAO.',
+    '.OAAAAAAAAAAAAO.',
+    '..OOODDOOOOOOO..',
+    '....O..O........',
+    '................',
+    '................'
+  ],
+  gun: [
+    '................',
+    '..OOOOOOOOOO....',
+    '.OAAHHHHAAAAO...',
+    '.OAAAAAAAAAAO...',
+    '..OODDOOOOOO....',
+    '..O..O..........',
+    '................',
+    '................'
+  ],
+  bow: [
+    '......OOO.......',
+    '........OO......',
+    '..OOOOOOOAO.....',
+    '.OAAHHHHAAAO....',
+    '..OOOOOOOAO.....',
+    '........OO......',
+    '......OOO.......',
+    '................'
+  ]
+};
+
+export function getHeroSprite(
+  heroId: HeroId | string,
+  color: string,
+  accent: string,
+  flash = false
+): HTMLCanvasElement {
+  const key = `hero_${heroId}_${color}_${accent}_${flash}`;
   let spr = spriteCache.get(key);
   if (!spr) {
-    spr = makeSprite(HERO_BASE_GRID, {
+    const grid = HERO_GRIDS[heroId as HeroId] ?? HERO_GRIDS.bucket_knight;
+    spr = makeSprite(grid, {
       O: '#110e18',
       A: flash ? '#ffffff' : accent,
       H: '#ffffff',
+      D: flash ? '#ffffff' : '#37474f',
       S: flash ? '#ffffff' : '#ffdbac',
-      W: '#110e18',
+      W: '#e0f7fa',
+      K: '#110e18',
       C: flash ? '#ffffff' : accent,
-      B: flash ? '#ffffff' : color
+      B: flash ? '#ffffff' : color,
+      Y: '#ffd54f',
+      G: '#69f0ae',
+      P: '#ff80ab',
+      R: '#ff3b5c'
+    });
+    spriteCache.set(key, spr);
+  }
+  return spr;
+}
+
+export function getWeaponSprite(weaponId: WeaponId, color: string): HTMLCanvasElement {
+  const key = `wpn_${weaponId}_${color}`;
+  let spr = spriteCache.get(key);
+  if (!spr) {
+    let shapeKey = 'gun';
+    if (weaponId === 'salted_fish') shapeKey = 'fish';
+    else if (weaponId === 'rubber_chicken') shapeKey = 'chicken';
+    else if (weaponId === 'golden_pan' || weaponId === 'bug_zapper') shapeKey = 'pan';
+    else if (weaponId === 'goblin_gatling' || weaponId === 'carrot_gatling' || weaponId === 'twin_flamethrower' || weaponId === 'mech_laser_arm') shapeKey = 'gatling';
+    else if (weaponId.includes('sword') || weaponId === 'twin_lightsaber' || weaponId === 'plunger_spear' || weaponId === 'folding_stool' || weaponId === 'goblin_totem') shapeKey = 'sword';
+    else if (weaponId.includes('staff') || weaponId.includes('tome') || weaponId.includes('bible') || weaponId.includes('prism') || weaponId.includes('vacuum')) shapeKey = 'staff';
+    else if (weaponId.includes('bow') || weaponId === 'slingshot' || weaponId === 'boomerang_blade') shapeKey = 'bow';
+
+    spr = makeSprite(WEAPON_SHAPES[shapeKey], {
+      O: '#110e18',
+      A: color,
+      H: '#ffffff',
+      D: '#546e7a',
+      Y: '#ffd54f',
+      K: '#110e18',
+      R: '#ff5252'
     });
     spriteCache.set(key, spr);
   }
@@ -167,6 +387,7 @@ export function getPetSprite(color: string): HTMLCanvasElement {
     spr = makeSprite(PET_GRID, {
       O: '#110e18',
       A: color,
+      H: '#ffffff',
       B: '#ffffff',
       W: '#ffffff',
       K: '#110e18',
@@ -222,6 +443,7 @@ export function getEnemySprite(
     spr = makeSprite(isBoss ? BOSS_GRID : GOBLIN_GRID, {
       O: '#110e18',
       A: flash ? '#ffffff' : color,
+      H: '#ffffff',
       B: flash ? '#ffffff' : accent,
       C: flash ? '#ffffff' : '#263238',
       R: '#ff1744',

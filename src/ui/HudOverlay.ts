@@ -3,15 +3,23 @@ import { HEROES, PETS } from '../content/heroes';
 import { RARITY_COLORS, STICKERS } from '../content/stickers';
 import { WEAPONS } from '../content/weapons';
 import { getWeaponMaxSlots } from '../sim/combat/attackPipeline';
-import { LobbyStationKind } from '../sim/lobby';
-import { MetaSave, WorldState } from '../sim/types';
+import { MAX_WEAPON_VAULT, MetaSave, PickupState, WorldState } from '../sim/types';
 
 export interface HudActions {
   onPause: () => void;
   onSelectWeapon: (idx: number) => void;
   onOpenBag: () => void;
-  onLobbyQuickAction: (kind: LobbyStationKind) => void;
-  onResumeCheckpoint?: () => void;
+  onOpenControls: () => void;
+  onTeleportRoom: (roomId: string) => void;
+  onGroundEquip: (pickupId: string) => void;
+  onGroundStore: (pickupId: string) => void;
+  onGroundRecycle: (pickupId: string) => void;
+  // Simple Lobby actions (only 4 clean main buttons!)
+  onLobbyStart: () => void;
+  onLobbyResume: () => void;
+  onLobbyHeroes: () => void;
+  onLobbyCamp: () => void;
+  onLobbyCellar: () => void;
 }
 
 export class HudOverlay {
@@ -20,6 +28,8 @@ export class HudOverlay {
   private toasts: Array<{ text: string; color: string; until: number }> = [];
   private mode: 'lobby' | 'dungeon' | null = null;
   private actions: HudActions;
+  private lastGroundCardId: string | null = null;
+  private lastWorldRef: WorldState | null = null;
 
   constructor(root: HTMLElement, actions: HudActions) {
     this.root = root;
@@ -42,81 +52,91 @@ export class HudOverlay {
       .join('');
   }
 
-  renderLobbyHud(meta: MetaSave, hasCheckpoint: boolean): void {
+  /**
+   * Super Clean Single-Screen Simple Lobby! No walking clutter, 1-second jump into adventure!
+   */
+  renderSimpleLobbyHud(meta: MetaSave, hasCheckpoint: boolean): void {
     if (this.mode !== 'lobby') {
       this.mode = 'lobby';
       this.root.innerHTML = `
-        <div class="hud-top">
-          <div class="hud-stats" id="lobby-top-stats"></div>
-          <div class="hud-right">
-            ${hasCheckpoint ? `<button class="px-btn ok" id="btn-hud-resume">▶ 继续上次冒险</button>` : ''}
-            <button class="px-btn primary" id="btn-hud-start">🌀 立刻下地牢</button>
+        <div class="simple-lobby-wrap">
+          <div class="lobby-left-card" id="lobby-hero-card"></div>
+          <div class="lobby-right-menu">
+            <div style="font-size:22px;font-weight:900;color:#ffd54f;text-shadow:0 2px 8px #000;margin-bottom:2px">
+              ⚔️ 魔改骑士 <span style="font-size:12px;color:#80d8ff">v2.0 探索版</span>
+            </div>
+            ${hasCheckpoint ? `<button class="px-btn ok lobby-big-btn" id="btn-s-resume"><span>▶ 继续上次探险</span><span>💾</span></button>` : ''}
+            <button class="px-btn primary lobby-big-btn" id="btn-s-start"><span>🚀 开始地牢探险</span><span>1-1 出发 →</span></button>
+            <button class="px-btn lobby-big-btn" id="btn-s-heroes"><span>🧙 英雄与宠物</span><span style="font-size:12px;color:#b0bec5">6英雄 / 升级</span></button>
+            <button class="px-btn lobby-big-btn" id="btn-s-camp"><span>⛺ 营地养成</span><span style="font-size:12px;color:#b0bec5">花园/锻造/扭蛋/每日</span></button>
+            <button class="px-btn lobby-big-btn" id="btn-s-cellar"><span>🏆 图鉴 · 键位 · 存档</span><span style="font-size:12px;color:#b0bec5">设置</span></button>
           </div>
-        </div>
-        <div class="lobby-shortcuts" id="lobby-shortcuts">
-          <button class="px-btn" data-warp="hero_npc">🧙 英雄/升级</button>
-          <button class="px-btn" data-warp="pet_bed">🐾 宠物</button>
-          <button class="px-btn" data-warp="garden">🌱 魔法花园</button>
-          <button class="px-btn" data-warp="forge">🔨 锻造台</button>
-          <button class="px-btn" data-warp="sticker_bench">🏷️ 贴纸预印</button>
-          <button class="px-btn" data-warp="gacha">🎰 扭蛋机</button>
-          <button class="px-btn" data-warp="daily_board">📋 每日挑战</button>
-          <button class="px-btn" data-warp="cellar">🏆 地下室图鉴</button>
-          <button class="px-btn" data-warp="tv_stats">📺 存档/统计</button>
         </div>
       `;
       this.root.appendChild(this.toastContainer);
-
-      this.root.querySelector('#btn-hud-start')?.addEventListener('click', () => this.actions.onLobbyQuickAction('portal'));
-      this.root.querySelector('#btn-hud-resume')?.addEventListener('click', () => this.actions.onResumeCheckpoint?.());
-      this.root.querySelectorAll('[data-warp]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const kind = (btn as HTMLElement).dataset.warp as LobbyStationKind;
-          this.actions.onLobbyQuickAction(kind);
-        });
-      });
+      this.root.querySelector('#btn-s-start')?.addEventListener('click', () => this.actions.onLobbyStart());
+      this.root.querySelector('#btn-s-resume')?.addEventListener('click', () => this.actions.onLobbyResume());
+      this.root.querySelector('#btn-s-heroes')?.addEventListener('click', () => this.actions.onLobbyHeroes());
+      this.root.querySelector('#btn-s-camp')?.addEventListener('click', () => this.actions.onLobbyCamp());
+      this.root.querySelector('#btn-s-cellar')?.addEventListener('click', () => this.actions.onLobbyCellar());
     }
 
     const h = HEROES[meta.selectedHero];
     const lv = meta.heroLevels[meta.selectedHero] ?? 1;
     const pet = PETS[meta.selectedPet];
-    const prepW = meta.preparedWeapon ? WEAPONS[meta.preparedWeapon.defId].name : '无';
-    const prepS = meta.preparedStickers.length > 0 ? STICKERS[meta.preparedStickers[0]].shortTag : '无';
-    const statsEl = this.root.querySelector('#lobby-top-stats');
-    if (statsEl) {
-      statsEl.innerHTML = `
-        <div style="font-size:13px;font-weight:800;color:#ffd54f">🏰 魔改骑士 · 豪华魔法客厅</div>
-        <div style="font-size:11px;margin-top:3px">出战：<b>${h.name} Lv.${lv}</b> + <b>${pet.name}</b></div>
-        <div class="hud-meta-row">
-          <span>💎 蓝币 ${meta.gems}</span>
-          <span>🔨 出门装: ${prepW}</span>
-          <span>🏷️ 预印: ${prepS}</span>
+    const card = this.root.querySelector('#lobby-hero-card');
+    if (card) {
+      card.innerHTML = `
+        <div style="font-size:15px;font-weight:900;color:${h.color}">${h.name} · Lv.${lv}</div>
+        <div style="font-size:12px;color:#cfd8dc;margin-top:2px">🐾 ${pet.name} · 💎 蓝币 <b>${meta.gems}</b></div>
+        <div style="font-size:11px;color:#90a4ae;margin-top:4px">
+          出门装：${meta.preparedWeapon ? WEAPONS[meta.preparedWeapon.defId].name : '初始武器'} ·
+          预印贴纸：${meta.preparedStickers[0] ? STICKERS[meta.preparedStickers[0]].shortTag : '无'}
         </div>
       `;
     }
     this.renderToasts();
   }
 
-  renderDungeonHud(world: WorldState): void {
+  renderDungeonHud(world: WorldState, nearGroundWeapon: PickupState | null, exploration: { percent: number }): void {
+    this.lastWorldRef = world;
     const p = world.players.p1;
     if (this.mode !== 'dungeon') {
       this.mode = 'dungeon';
+      this.lastGroundCardId = null;
       this.root.innerHTML = `
         <div class="hud-top">
           <div class="hud-stats" id="dng-stats"></div>
           <div id="dng-boss-wrap"></div>
           <div class="hud-right">
             <div class="floor-badge" id="dng-floor"></div>
-            <div class="minimap-box"><canvas id="minimap-canvas" width="76" height="76"></canvas></div>
-            <button class="px-btn" id="btn-bag">🏷️ 贴纸</button>
-            <button class="px-btn" id="btn-pause">⏸️</button>
+            <div class="minimap-box" title="点击已发现房间可快捷传送"><canvas id="minimap-canvas" width="90" height="76" style="cursor:pointer"></canvas></div>
+            <button class="px-btn primary" id="btn-bag">🎒 仓库/贴纸</button>
+            <button class="px-btn" id="btn-pause">⚙️</button>
           </div>
         </div>
+        <div id="ground-card-slot"></div>
         <div class="weapon-strip" id="weapon-strip"></div>
       `;
       this.root.appendChild(this.toastContainer);
       this.root.querySelector('#btn-pause')?.addEventListener('click', () => this.actions.onPause());
       this.root.querySelector('#btn-bag')?.addEventListener('click', () => this.actions.onOpenBag());
+      this.root.querySelector('#minimap-canvas')?.addEventListener('click', (ev) => {
+        const w = this.lastWorldRef;
+        if (!w) return;
+        const rect = (ev.target as HTMLCanvasElement).getBoundingClientRect();
+        const cx = ((ev as MouseEvent).clientX - rect.left) * (90 / rect.width);
+        const cy = ((ev as MouseEvent).clientY - rect.top) * (76 / rect.height);
+        for (const r of w.map.rooms) {
+          if (!r.discovered) continue;
+          const rx = 4 + r.gx * 14;
+          const ry = 4 + r.gy * 14;
+          if (cx >= rx && cx <= rx + 12 && cy >= ry && cy <= ry + 12) {
+            this.actions.onTeleportRoom(r.id);
+            break;
+          }
+        }
+      });
     }
 
     const effShieldMax = p.maxShield + (p.talents.includes('gold_armor') ? Math.min(3, Math.floor(p.coins / 100)) : 0);
@@ -127,21 +147,25 @@ export class HudOverlay {
       <div class="bar-row"><span>⚡</span><div class="bar-track"><div class="bar-fill bar-mana" style="width:${Math.max(0, (p.mana / p.maxMana) * 100)}%"></div></div><span>${Math.floor(p.mana)}/${p.maxMana}</span></div>
       <div class="hud-meta-row">
         <span>💰 ${p.coins}</span>
-        <span>☠️ ${p.kills}</span>
-        ${world.dailyFactors.length > 0 ? `<span>📋 ${world.dailyFactors.map((f) => DAILY_FACTORS[f].icon).join('')}</span>` : ''}
+        <span>🏷️ 包:${p.stickerBag.length}</span>
+        <span>🎒 仓:${p.weaponVault.length}/${MAX_WEAPON_VAULT}</span>
+        ${world.dailyFactors.length > 0 ? `<span>${world.dailyFactors.map((f) => DAILY_FACTORS[f].icon).join('')}</span>` : ''}
       </div>
     `;
 
-    // Floor badge
+    // Bag button badge
+    const bagBtn = this.root.querySelector('#btn-bag')!;
+    bagBtn.textContent = p.stickerBag.length > 0 ? `🎒 背包 (贴纸${p.stickerBag.length})` : '🎒 仓库/贴纸';
+
+    // Floor & exploration badge
     const floorEl = this.root.querySelector('#dng-floor')!;
-    const bName = BIOMES[world.biome].name;
     floorEl.innerHTML = `
-      <div style="color:#ffd54f">${world.endlessMode ? '无尽 ' : ''}${world.worldIndex}-${world.stageIndex}</div>
-      <div style="font-size:10px;color:#b0bec5">${bName}</div>
+      <div style="color:#ffd54f">第 ${world.floor} 区 · ${BIOMES[world.biome].name}</div>
+      <div style="font-size:11px;color:#80d8ff">🗺️ 探索度 ${exploration.percent}%</div>
     `;
 
-    // Boss HP Bar
-    const boss = world.enemies.find((e) => e.isBoss && e.hp > 0);
+    // Boss or Awake Bounty Boss HP Bar
+    const boss = world.enemies.find((e) => (e.isBoss || (e.isBounty && e.bountyAwake)) && e.hp > 0);
     const bossWrap = this.root.querySelector('#dng-boss-wrap')!;
     if (boss) {
       bossWrap.innerHTML = `
@@ -151,26 +175,48 @@ export class HudOverlay {
         </div>
       `;
     } else if (world.bossBannerTimer > 0) {
-      bossWrap.innerHTML = `
-        <div class="boss-bar-wrap">
-          <div class="boss-bar-title">⚠️ ${world.bossBannerName}</div>
-        </div>
-      `;
+      bossWrap.innerHTML = `<div class="boss-bar-wrap"><div class="boss-bar-title">⚠️ ${world.bossBannerName}</div></div>`;
     } else {
       bossWrap.innerHTML = '';
     }
 
-    // Weapon strip
+    // Crisp Floating Ground Weapon Action Card (Equip / Store in Vault / Recycle for Gold!)
+    const gId = nearGroundWeapon?.id ?? null;
+    if (gId !== this.lastGroundCardId) {
+      this.lastGroundCardId = gId;
+      const slot = this.root.querySelector('#ground-card-slot')!;
+      if (nearGroundWeapon && nearGroundWeapon.weapon) {
+        const wd = WEAPONS[nearGroundWeapon.weapon.defId];
+        slot.innerHTML = `
+          <div class="ground-weapon-card">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <b style="color:${RARITY_COLORS[wd.rarity]};font-size:14px">${wd.name}</b>
+              <span style="font-size:11px;color:#ffd54f">伤${wd.damage} · 蓝耗${wd.manaCost}</span>
+            </div>
+            <div style="font-size:11px;color:#cfd8dc;margin-top:3px">${wd.desc}</div>
+            <div class="ground-weapon-actions">
+              <button class="px-btn primary" id="btn-gw-equip">⚔️ 直接装备</button>
+              <button class="px-btn" id="btn-gw-store">🎒 存入仓库(${p.weaponVault.length}/${MAX_WEAPON_VAULT})</button>
+              <button class="px-btn ok" id="btn-gw-recycle">♻️ 回收换金币</button>
+            </div>
+          </div>
+        `;
+        slot.querySelector('#btn-gw-equip')?.addEventListener('click', () => this.actions.onGroundEquip(nearGroundWeapon.id));
+        slot.querySelector('#btn-gw-store')?.addEventListener('click', () => this.actions.onGroundStore(nearGroundWeapon.id));
+        slot.querySelector('#btn-gw-recycle')?.addEventListener('click', () => this.actions.onGroundRecycle(nearGroundWeapon.id));
+      } else {
+        slot.innerHTML = '';
+      }
+    }
+
+    // Bottom weapon strip
     const stripEl = this.root.querySelector('#weapon-strip')!;
     stripEl.innerHTML = p.weapons
       .map((w, idx) => {
         const def = WEAPONS[w.defId];
         const maxS = getWeaponMaxSlots(p, w, world.dailyFactors);
-        const chips = w.stickers
-          .map((sid) => `<span class="sticker-chip" style="background:${STICKERS[sid].color}">${STICKERS[sid].shortTag}</span>`)
-          .join('');
-        const emptyCount = Math.max(0, maxS - w.stickers.length);
-        const empties = '<span class="sticker-chip" style="background:#2b2340;color:#7d6ca8">空槽</span>'.repeat(emptyCount);
+        const chips = w.stickers.map((sid) => `<span class="sticker-chip" style="background:${STICKERS[sid].color}">${STICKERS[sid].shortTag}</span>`).join('');
+        const empties = '<span class="sticker-chip" style="background:#2b2340;color:#7d6ca8">空</span>'.repeat(Math.max(0, maxS - w.stickers.length));
         return `
           <div class="weapon-pill ${idx === p.activeWeaponIndex ? 'active' : ''}" data-widx="${idx}">
             <div style="color:${RARITY_COLORS[def.rarity]};font-weight:800">${def.name}</div>
@@ -183,7 +229,6 @@ export class HudOverlay {
       el.addEventListener('click', () => this.actions.onSelectWeapon(Number((el as HTMLElement).dataset.widx)));
     });
 
-    // Minimap
     this.drawMinimap(world);
     this.renderToasts();
   }
@@ -195,27 +240,27 @@ export class HudOverlay {
     ctx.fillStyle = '#0d0a16';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const cell = 13;
-    const off = 5;
     for (const r of world.map.rooms) {
       if (r.kind === 'secret' && !r.secretRevealed) continue;
-      const x = off + r.gx * cell;
-      const y = off + r.gy * cell;
+      const x = 4 + r.gx * 14;
+      const y = 4 + r.gy * 14;
       let col = '#455a64';
       if (r.id === world.activeRoomId) col = '#ffffff';
       else if (r.kind === 'boss') col = '#ff3b5c';
+      else if (r.kind === 'bounty') col = '#ff9100';
+      else if (r.kind === 'shop') col = '#69f0ae';
       else if (r.kind === 'portal') col = '#40c4ff';
       else if (r.kind === 'chest') col = '#ffd54f';
       else if (r.kind === 'curiosity') col = '#c77dff';
       else if (r.kind === 'secret') col = '#ff80ab';
-      else if (r.cleared) col = '#69f0ae';
+      else if (r.cleared) col = '#4db6ac';
 
-      ctx.fillStyle = r.discovered ? col : 'rgba(90, 90, 110, 0.35)';
-      ctx.fillRect(x, y, 10, 10);
+      ctx.fillStyle = r.discovered ? col : 'rgba(100, 100, 125, 0.35)';
+      ctx.fillRect(x, y, 11, 11);
       if (r.id === world.activeRoomId) {
         ctx.strokeStyle = '#ffd54f';
         ctx.lineWidth = 1.5;
-        ctx.strokeRect(x, y, 10, 10);
+        ctx.strokeRect(x, y, 11, 11);
       }
     }
   }

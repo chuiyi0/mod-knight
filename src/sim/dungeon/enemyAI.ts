@@ -26,6 +26,20 @@ export function stepEnemyAI(
 ): void {
   if (enemy.hp <= 0) return;
 
+  // Optional Field Bounty Mini-Boss: stays peacefully neutral until player enters close ring or attacks!
+  if (enemy.isBounty && !enemy.bountyAwake) {
+    if (enemy.hitFlashTimer > 0) enemy.hitFlashTimer = Math.max(0, enemy.hitFlashTimer - dt);
+    const d0 = Math.hypot(target.x - enemy.x, target.y - enemy.y);
+    if (d0 < 56 || enemy.hp < enemy.maxHp) {
+      enemy.bountyAwake = true;
+      enemy.bossSpeech = '接下悬赏了是吧！来战个痛快！';
+      enemy.bossSpeechTimer = 2.5;
+      helpers.addFloatingText(enemy.x, enemy.y - 20, '👑 悬赏头领开战！', '#ffd54f', 1.15);
+    } else {
+      return;
+    }
+  }
+
   // Timers
   if (enemy.hitFlashTimer > 0) enemy.hitFlashTimer = Math.max(0, enemy.hitFlashTimer - dt);
   if (enemy.ccDiminishTimer > 0) enemy.ccDiminishTimer = Math.max(0, enemy.ccDiminishTimer - dt);

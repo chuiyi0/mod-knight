@@ -1,4 +1,4 @@
-import { InputCommand } from '../sim/types';
+import { InputCommand, MetaSave } from '../sim/types';
 
 export class TouchAndKeyboardInput {
   private keys = new Set<string>();
@@ -16,24 +16,31 @@ export class TouchAndKeyboardInput {
   private openBagCb?: () => void;
   private togglePauseCb?: () => void;
 
+  private root: HTMLElement;
+  private zoneEl: HTMLDivElement;
+  private clusterEl: HTMLDivElement;
   private joyBaseEl: HTMLDivElement;
   private joyKnobEl: HTMLDivElement;
   private fireBtnEl: HTMLButtonElement;
   private skillBtnEl: HTMLButtonElement;
   private switchBtnEl: HTMLButtonElement;
   private switchHoldTimer: number | null = null;
+  private settings: MetaSave['settings'];
 
   constructor(
     root: HTMLElement,
+    settings: MetaSave['settings'],
     opts: { onUnlockAudio: () => void; onOpenBag: () => void; onTogglePause: () => void }
   ) {
+    this.root = root;
+    this.settings = settings;
     this.openBagCb = opts.onOpenBag;
     this.togglePauseCb = opts.onTogglePause;
 
     root.innerHTML = `
       <div class="touch-zone-left" id="joy-zone"></div>
       <div class="joy-base" id="joy-base"><div class="joy-knob" id="joy-knob"></div></div>
-      <div class="touch-right-cluster">
+      <div class="touch-right-cluster" id="right-cluster">
         <button class="act-btn btn-switch" id="btn-switch" type="button">
           <span>🔄</span>
           <span class="btn-sub-label">切枪</span>
@@ -49,20 +56,22 @@ export class TouchAndKeyboardInput {
       </div>
     `;
 
-    const zone = root.querySelector('#joy-zone') as HTMLDivElement;
+    this.zoneEl = root.querySelector('#joy-zone') as HTMLDivElement;
+    this.clusterEl = root.querySelector('#right-cluster') as HTMLDivElement;
     this.joyBaseEl = root.querySelector('#joy-base') as HTMLDivElement;
     this.joyKnobEl = root.querySelector('#joy-knob') as HTMLDivElement;
     this.fireBtnEl = root.querySelector('#btn-fire') as HTMLButtonElement;
     this.skillBtnEl = root.querySelector('#btn-skill') as HTMLButtonElement;
     this.switchBtnEl = root.querySelector('#btn-switch') as HTMLButtonElement;
 
-    // Floating virtual joystick on left half of screen
+    this.applySettings(settings);
+
     const maxR = 44;
-    zone.addEventListener('pointerdown', (e) => {
+    this.zoneEl.addEventListener('pointerdown', (e) => {
       opts.onUnlockAudio();
       if (this.joyTouchId !== null) return;
       this.joyTouchId = e.pointerId;
-      zone.setPointerCapture(e.pointerId);
+      this.zoneEl.setPointerCapture(e.pointerId);
       this.joyOriginX = e.clientX;
       this.joyOriginY = e.clientY;
       this.joyBaseEl.style.left = `${e.clientX}px`;
@@ -71,7 +80,7 @@ export class TouchAndKeyboardInput {
       this.joyKnobEl.style.transform = 'translate(-50%, -50%)';
     });
 
-    zone.addEventListener('pointermove', (e) => {
+    this.zoneEl.addEventListener('pointermove', (e) => {
       if (e.pointerId !== this.joyTouchId) return;
       const dx = e.clientX - this.joyOriginX;
       const dy = e.clientY - this.joyOriginY;
@@ -97,10 +106,9 @@ export class TouchAndKeyboardInput {
       this.joyVecY = 0;
       this.joyBaseEl.classList.remove('visible');
     };
-    zone.addEventListener('pointerup', resetJoy);
-    zone.addEventListener('pointercancel', resetJoy);
+    this.zoneEl.addEventListener('pointerup', resetJoy);
+    this.zoneEl.addEventListener('pointercancel', resetJoy);
 
-    // Fire / Interact main button
     this.fireBtnEl.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       opts.onUnlockAudio();
@@ -116,7 +124,6 @@ export class TouchAndKeyboardInput {
     this.fireBtnEl.addEventListener('pointercancel', endFire);
     this.fireBtnEl.addEventListener('pointerleave', endFire);
 
-    // Skill button
     this.skillBtnEl.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       opts.onUnlockAudio();
@@ -127,7 +134,6 @@ export class TouchAndKeyboardInput {
     this.skillBtnEl.addEventListener('pointerup', endSkill);
     this.skillBtnEl.addEventListener('pointercancel', endSkill);
 
-    // Switch weapon (tap) / Open sticker bag (long-press 400ms)
     this.switchBtnEl.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       opts.onUnlockAudio();
@@ -151,25 +157,20 @@ export class TouchAndKeyboardInput {
       this.switchBtnEl.addEventListener('pointercancel', onUp);
     });
 
-    // Keyboard bindings for PC testing
     window.addEventListener('keydown', (e) => {
       opts.onUnlockAudio();
       const k = e.key.toLowerCase();
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
+      const kb = this.settings.keyBindings;
+      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', kb.bag].includes(k)) {
         e.preventDefault();
       }
       if (!this.keys.has(k)) {
-        if (k === 'j' || k === ' ') this.firePressedQueue = true;
-        if (k === 'f' || k === 'enter') this.interactPressedQueue = true;
-        if (k === 'k' || k === 'shift') this.skillPressedQueue = true;
-        if (k === 'q' || k === 'e') this.switchPressedQueue = true;
-        if (k === 'tab') {
-          e.preventDefault();
-          this.openBagCb?.();
-        }
-        if (k === 'escape') {
-          this.togglePauseCb?.();
-        }
+        if (k === kb.fire || k === ' ') this.firePressedQueue = true;
+        if (k === kb.interact || k === 'enter') this.interactPressedQueue = true;
+        if (k === kb.skill || k === 'shift') this.skillPressedQueue = true;
+        if (k === kb.switch || k === 'e') this.switchPressedQueue = true;
+        if (k === kb.bag) this.openBagCb?.();
+        if (k === 'escape') this.togglePauseCb?.();
       }
       this.keys.add(k);
     });
@@ -179,12 +180,37 @@ export class TouchAndKeyboardInput {
     });
   }
 
+  applySettings(settings: MetaSave['settings']): void {
+    this.settings = settings;
+    const sc = Math.max(0.75, Math.min(1.4, settings.buttonScale ?? 1));
+    const swap = Boolean(settings.swapHands);
+
+    // Swap left/right handed touch zones cleanly!
+    if (swap) {
+      this.zoneEl.style.left = '52%';
+      this.clusterEl.style.right = 'auto';
+      this.clusterEl.style.left = 'max(18px, env(safe-area-inset-left))';
+    } else {
+      this.zoneEl.style.left = '0';
+      this.clusterEl.style.left = 'auto';
+      this.clusterEl.style.right = 'max(18px, env(safe-area-inset-right))';
+    }
+
+    const off = settings.touchOffsets;
+    this.fireBtnEl.style.transform = `translate(${off.fire.x}px, ${off.fire.y}px) scale(${sc})`;
+    this.skillBtnEl.style.transform = `translate(${off.skill.x}px, ${off.skill.y}px) scale(${sc})`;
+    this.switchBtnEl.style.transform = `translate(${off.switch.x}px, ${off.switch.y}px) scale(${sc})`;
+  }
+
+  setVisible(visible: boolean): void {
+    this.root.style.display = visible ? 'block' : 'none';
+  }
+
   updateButtonVisuals(opts: {
     showInteract: boolean;
     interactLabel?: string;
     skillCooldown: number;
     skillCharges: number;
-    isLobby: boolean;
   }): void {
     const iconEl = this.fireBtnEl.querySelector('#fire-icon')!;
     const labelEl = this.fireBtnEl.querySelector('#fire-label')!;
@@ -193,23 +219,13 @@ export class TouchAndKeyboardInput {
     if (opts.showInteract) {
       iconEl.textContent = '👋';
       labelEl.textContent = opts.interactLabel ?? '互动';
-    } else if (opts.isLobby) {
-      iconEl.textContent = '👋';
-      labelEl.textContent = '互动';
     } else {
       iconEl.textContent = '⚔️';
       labelEl.textContent = '攻击';
     }
 
-    if (opts.isLobby) {
-      this.skillBtnEl.style.display = 'none';
-      this.switchBtnEl.style.display = 'none';
-    } else {
-      this.skillBtnEl.style.display = 'flex';
-      this.switchBtnEl.style.display = 'flex';
-      cdEl.textContent = opts.skillCharges > 0 ? '技能' : `${opts.skillCooldown.toFixed(1)}s`;
-      this.skillBtnEl.style.opacity = opts.skillCharges > 0 ? '1' : '0.55';
-    }
+    cdEl.textContent = opts.skillCharges > 0 ? '技能' : `${opts.skillCooldown.toFixed(1)}s`;
+    this.skillBtnEl.style.opacity = opts.skillCharges > 0 ? '1' : '0.55';
   }
 
   pollCommand(playerId = 'p1'): InputCommand {
@@ -220,7 +236,8 @@ export class TouchAndKeyboardInput {
     if (this.keys.has('a') || this.keys.has('arrowleft')) mx -= 1;
     if (this.keys.has('d') || this.keys.has('arrowright')) mx += 1;
 
-    const fireHeld = this.fireHeld || this.keys.has('j') || this.keys.has(' ');
+    const kb = this.settings.keyBindings;
+    const fireHeld = this.fireHeld || this.keys.has(kb.fire) || this.keys.has(' ');
     const cmd: InputCommand = {
       playerId,
       moveX: mx,

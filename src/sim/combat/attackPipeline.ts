@@ -191,14 +191,17 @@ export function buildAttackContext(
     meleeRadius *= 1.2;
   }
 
-  // Mana deltas from actual equipped stickers
+  // Gentler mana economy: scale down heavy base mana costs & cap sticker mana penalty at +2!
+  manaCost = manaCost <= 1 ? manaCost : Math.max(1, Math.round(manaCost * 0.65));
+  let stickerManaDelta = 0;
   for (const s of rawStickers) {
     let delta = STICKERS[s].manaDelta;
     if (delta > 0 && player.talents.includes('glue_boost')) {
       delta = Math.floor(delta / 2);
     }
-    manaCost += delta;
+    stickerManaDelta += delta;
   }
+  manaCost += Math.min(2, stickerManaDelta);
 
   // Apply sticker hooks
   for (const s of effectiveStickers) {

@@ -1,6 +1,5 @@
 import './styles.css';
 import { RetroAudioEngine } from './audio/sfx';
-import { getDailyChallengeFactors } from './content/biomes';
 import {
   loadMetaSave,
   loadRunCheckpoint,
@@ -9,11 +8,9 @@ import {
   saveMetaSave,
   saveRunCheckpoint,
   settleRunIntoMeta,
-  todayDateString,
   unlockAchievementInMeta
 } from './platform/storage';
 import { PixelCanvasRenderer } from './render/canvasRenderer';
-import { LobbyStation, LobbyStationKind, WalkableLobby } from './sim/lobby';
 import { DailyFactorId, MetaSave, SIM_DT } from './sim/types';
 import { GameWorld } from './sim/world';
 import { HudOverlay } from './ui/HudOverlay';
@@ -22,28 +19,20 @@ import { TouchAndKeyboardInput } from './ui/TouchControls';
 
 let meta: MetaSave = loadMetaSave();
 let scene: 'lobby' | 'dungeon' = 'lobby';
-let lobby = new WalkableLobby();
 let world: GameWorld | null = null;
 let isDailyRun = false;
 let hitstopTimer = 0;
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+const textCanvas = document.getElementById('text-canvas') as HTMLCanvasElement;
 const hudRoot = document.getElementById('hud-root') as HTMLElement;
 const touchRoot = document.getElementById('touch-root') as HTMLElement;
 const modalRoot = document.getElementById('modal-root') as HTMLElement;
 const rotateHint = document.getElementById('rotate-hint') as HTMLElement;
 
-const renderer = new PixelCanvasRenderer(canvas);
+const renderer = new PixelCanvasRenderer(canvas, textCanvas);
 const audio = new RetroAudioEngine();
 const modals = new ModalManager(modalRoot);
-
-function syncSettings() {
-  audio.sfxEnabled = meta.settings.sfxEnabled;
-  audio.bgmEnabled = meta.settings.bgmEnabled;
-  renderer.shakeEnabled = meta.settings.shakeEnabled;
-  if (!meta.settings.bgmEnabled) audio.stopBgm();
-}
-syncSettings();
 
 const hud = new HudOverlay(hudRoot, {
   onPause: () => openPauseModal(),
@@ -56,35 +45,76 @@ const hud = new HudOverlay(hudRoot, {
       }
     }
   },
-  onOpenBag: () => openPauseModal(),
-  onLobbyQuickAction: (kind) => handleLobbyQuickWarp(kind),
-  onResumeCheckpoint: () => resumeFromCheckpoint()
+  onOpenBag: () => openBagModal(),
+  onOpenControls: () => openControlsFromPause(),
+  onTeleportRoom: (roomId) => {
+    world?.teleportToRoom(roomId);
+  },
+  onGroundEquip: (pid) => {
+    world?.equipGroundWeaponById(pid);
+  },
+  onGroundStore: (pid) => {
+    world?.storeGroundWeaponToVault(pid);
+  },
+  onGroundRecycle: (pid) => {
+    world?.recycleGroundWeapon(pid);
+  },
+  onLobbyStart: () => {
+    modals.openStartModal(meta, loadRunCheckpoint(), {
+      onStartNormal: () => startNewRun([]),
+      onStartDaily: (factors) => startNewRun(factors),
+      onResume: () => resumeFromCheckpoint(),
+      onClose: () => {}
+    });
+  },
+  onLobbyResume: () => resumeFromCheckpoint(),
+  onLobbyHeroes: () => {
+    modals.openHeroesAndPetsHub(meta, (m) => hud.pushToast(m, '#ffd54f'), () => {});
+  },
+  onLobbyCamp: () => {
+    modals.openCampHub(meta, (factors) => startNewRun(factors), (m) => hud.pushToast(m, '#ffd54f'), () => {});
+  },
+  onLobbyCellar: () => {
+    modals.openCellarAndSettingsHub(meta, {
+      onImported: (imported) => {
+        meta = imported;
+        syncSettings();
+      },
+      onApplyControls: () => input.applySettings(meta.settings),
+      onToast: (m) => hud.pushToast(m, '#ffd54f'),
+      onClose: () => {}
+    });
+  }
 });
 
-const input = new TouchAndKeyboardInput(touchRoot, {
-  onUnlockAudio: () => {
-    audio.unlock();
-  },
+const input = new TouchAndKeyboardInput(touchRoot, meta.settings, {
+  onUnlockAudio: () => audio.unlock(),
   onOpenBag: () => {
-    if (scene === 'dungeon' && !modals.isOpen) openPauseModal();
+    if (scene === 'dungeon' && !modals.isOpen) openBagModal();
   },
   onTogglePause: () => {
-    if (modals.isOpen && scene === 'lobby') {
-      modals.close();
-      return;
-    }
-    if (scene === 'dungeon') {
-      if (modals.isOpen && world && world.state.status === 'paused_modal' && !world.state.pendingStickerOffer && !world.state.pendingTalentOptions) {
+    if (modals.isOpen) {
+      if (scene === 'lobby') {
+        modals.close();
+      } else if (world && !world.state.pendingTalentOptions) {
         modals.close();
         world.closeWorkshopModal();
-      } else if (!modals.isOpen) {
-        openPauseModal();
       }
+    } else if (scene === 'dungeon') {
+      openPauseModal();
     }
   }
 });
 
-// Portrait rotation suggestion (dismissible)
+function syncSettings() {
+  audio.sfxEnabled = meta.settings.sfxEnabled;
+  audio.bgmEnabled = meta.settings.bgmEnabled;
+  renderer.shakeEnabled = meta.settings.shakeEnabled;
+  input.applySettings(meta.settings);
+  if (!meta.settings.bgmEnabled) audio.stopBgm();
+}
+syncSettings();
+
 let rotateDismissed = false;
 function checkOrientation() {
   const isMobilePortrait = window.innerHeight > window.innerWidth && window.innerWidth < 760;
@@ -100,17 +130,33 @@ window.addEventListener('resize', () => {
 });
 checkOrientation();
 
+function openBagModal() {
+  if (!world) return;
+  world.state.status = 'paused_modal';
+  modals.openVaultAndStickerBag(world, () => {
+    if (world && !world.state.pendingTalentOptions) world.state.status = 'playing';
+  });
+}
+
+function openControlsFromPause() {
+  modals.openControlsEditor(
+    meta,
+    () => input.applySettings(meta.settings),
+    (m) => hud.pushToast(m, '#ffd54f'),
+    () => openPauseModal()
+  );
+}
+
 function openPauseModal() {
   if (!world) return;
   world.state.status = 'paused_modal';
-  modals.openDungeonBagAndPause(world, meta, {
+  modals.openPauseMenu(world, meta, {
     onResume: () => {
-      if (world && !world.state.pendingStickerOffer && !world.state.pendingTalentOptions) {
-        world.state.status = 'playing';
-      }
+      if (world && !world.state.pendingTalentOptions) world.state.status = 'playing';
     },
     onReturnLobby: () => finishRunAndReturnLobby(false),
-    onToggleSettings: () => syncSettings()
+    onToggleSettings: () => syncSettings(),
+    onOpenControls: () => openControlsFromPause()
   });
 }
 
@@ -118,9 +164,7 @@ function makeWorldHooks() {
   return {
     onUnlockAchievement: (id: string) => {
       const res = unlockAchievementInMeta(meta, id);
-      if (res.unlockedNow) {
-        hud.pushToast(`🏅 解锁成就【${res.title}】+${res.reward}💎！`, '#ffd54f');
-      }
+      if (res.unlockedNow) hud.pushToast(`🏅 解锁成就【${res.title}】+${res.reward}💎！`, '#ffd54f');
     },
     onRecordWeapon: (wid: Parameters<typeof recordWeaponSeen>[1]) => {
       recordWeaponSeen(meta, wid);
@@ -151,11 +195,12 @@ function startNewRun(dailyFactors: DailyFactorId[] = []) {
     preparedLucky: meta.preparedLucky,
     ...makeWorldHooks()
   });
+  renderer.resetCamera();
   saveRunCheckpoint(world.exportCheckpoint(0));
   scene = 'dungeon';
   audio.play('portal');
   audio.startBgm('dungeon');
-  hud.pushToast('⚔️ 进入 1-1 地牢！左摇杆走位，右手攻击/技能/切枪！', '#80d8ff');
+  hud.pushToast('🗺️ 出发探险！贴纸自动入背包，地上武器可一键装备/存仓库/回收！', '#80d8ff');
 }
 
 function resumeFromCheckpoint() {
@@ -166,10 +211,11 @@ function resumeFromCheckpoint() {
   }
   isDailyRun = cp.dailyFactors.length > 0;
   world = GameWorld.fromCheckpoint(cp, makeWorldHooks());
+  renderer.resetCamera();
   scene = 'dungeon';
   audio.play('portal');
   audio.startBgm('dungeon');
-  hud.pushToast(`💾 已从第 ${cp.floor} 层断点继续冒险！`, '#69f0ae');
+  hud.pushToast(`💾 已从第 ${cp.floor} 区继续探险！`, '#69f0ae');
 }
 
 function finishRunAndReturnLobby(won: boolean) {
@@ -185,74 +231,11 @@ function finishRunAndReturnLobby(won: boolean) {
       weaponsHeld: p.weapons.map((w) => w.defId),
       isDailyChallenge: isDailyRun
     });
-    hud.pushToast(`🏠 回到客厅！带回 +${res.totalGems} 蓝币与材料！`, '#ffd54f');
+    hud.pushToast(`🏠 返回首页！带回 +${res.totalGems} 蓝币与材料！`, '#ffd54f');
   }
   world = null;
   scene = 'lobby';
-  lobby = new WalkableLobby();
   audio.startBgm('lobby');
-}
-
-function openLobbyStationModal(station: LobbyStation) {
-  const onClose = () => {};
-  const toast = (m: string) => hud.pushToast(m, '#ffd54f');
-
-  switch (station.kind) {
-    case 'portal':
-      modals.openPortalModal(meta, loadRunCheckpoint(), {
-        onStartNormal: () => startNewRun([]),
-        onStartDaily: () => startNewRun(getDailyChallengeFactors(todayDateString(), meta.dailySeedOffset)),
-        onResume: () => resumeFromCheckpoint(),
-        onClose
-      });
-      break;
-    case 'hero_npc':
-      modals.openHeroesModal(meta, station.heroId, toast, onClose);
-      break;
-    case 'pet_bed':
-      modals.openPetsModal(meta, toast, onClose);
-      break;
-    case 'garden':
-      modals.openGardenModal(meta, toast, onClose);
-      break;
-    case 'forge':
-      modals.openForgeModal(meta, toast, onClose);
-      break;
-    case 'sticker_bench':
-      modals.openStickerBenchModal(meta, toast, onClose);
-      break;
-    case 'gacha':
-      modals.openGachaModal(meta, toast, onClose);
-      break;
-    case 'daily_board':
-      modals.openDailyBoardModal(meta, (factors) => startNewRun(factors), toast, onClose);
-      break;
-    case 'cellar':
-      modals.openCellarModal(meta, onClose);
-      break;
-    case 'tv_stats':
-      modals.openStatsAndSaveModal(
-        meta,
-        (imported) => {
-          meta = imported;
-          syncSettings();
-        },
-        toast,
-        onClose
-      );
-      break;
-    case 'lan_terminal':
-      modals.openLanTerminalModal(onClose);
-      break;
-  }
-}
-
-function handleLobbyQuickWarp(kind: LobbyStationKind) {
-  const st = lobby.warpToStation(kind);
-  if (st) {
-    audio.play('switch');
-    openLobbyStationModal(st);
-  }
 }
 
 function processWorldEvents() {
@@ -273,9 +256,6 @@ function processWorldEvents() {
       case 'toast':
         hud.pushToast(ev.text, ev.color);
         break;
-      case 'sticker_pickup':
-        modals.openStickerOffer(world, () => {});
-        break;
       case 'workshop_open':
         modals.openWorkshopShop(world, ev.interactableId, () => {});
         break;
@@ -283,6 +263,7 @@ function processWorldEvents() {
         modals.openTalentChoice(world, () => {});
         break;
       case 'floor_complete':
+        renderer.resetCamera();
         saveRunCheckpoint(world.exportCheckpoint(0));
         audio.startBgm('dungeon');
         break;
@@ -302,9 +283,7 @@ function processWorldEvents() {
         const p = world.getMainPlayer();
         const estGems = p.gemsEarned + Math.floor(p.coins * 1.2) + world.state.floor * 45;
         modals.openRunResult(world, false, estGems, {
-          onRevive: () => {
-            world?.triggerRevive();
-          },
+          onRevive: () => world?.triggerRevive(),
           onLobby: () => finishRunAndReturnLobby(false)
         });
         break;
@@ -313,7 +292,6 @@ function processWorldEvents() {
   }
 }
 
-// === Main 60Hz Fixed-Timestep Loop ===
 let lastTime = performance.now();
 let accumulator = 0;
 
@@ -331,29 +309,18 @@ function frame(now: number) {
   const cmd = input.pollCommand('p1');
 
   if (scene === 'lobby') {
-    if (!modals.isOpen) {
-      const triggered = lobby.step(cmd, dt);
-      if (triggered) openLobbyStationModal(triggered);
-    }
-    const nearStation = lobby.state.stations.find((s) => s.id === lobby.state.nearestStationId);
-    input.updateButtonVisuals({
-      showInteract: Boolean(nearStation),
-      interactLabel: nearStation ? '打开' : '互动',
-      skillCooldown: 0,
-      skillCharges: 1,
-      isLobby: true
-    });
-    renderer.renderLobby(lobby.state, meta, dt);
-    hud.renderLobbyHud(meta, Boolean(loadRunCheckpoint()));
+    input.setVisible(false);
+    renderer.renderSimpleLobbyBackdrop(meta, dt);
+    hud.renderSimpleLobbyHud(meta, Boolean(loadRunCheckpoint()));
     accumulator = 0;
   } else if (world) {
+    input.setVisible(!modals.isOpen);
     while (accumulator >= SIM_DT) {
       if (!modals.isOpen && world.state.status === 'playing') {
         world.step([cmd], SIM_DT);
         processWorldEvents();
       }
       accumulator -= SIM_DT;
-      // Clear single-frame edge presses after first substep
       cmd.firePressed = false;
       cmd.skillPressed = false;
       cmd.switchPressed = false;
@@ -361,16 +328,16 @@ function frame(now: number) {
     }
 
     const p1 = world.getMainPlayer();
-    const near = world.findNearestInteractableOrPickup(p1);
+    const nearInter = world.findNearestInteractable(p1);
+    const nearGroundWpn = world.findNearestGroundWeapon(p1);
     input.updateButtonVisuals({
-      showInteract: Boolean(near),
-      interactLabel: near?.type === 'pickup' ? '拾取' : '互动',
+      showInteract: Boolean(nearInter),
+      interactLabel: nearInter?.kind === 'portal' ? '传送' : '互动',
       skillCooldown: p1.skillCooldown,
-      skillCharges: p1.skillCharges,
-      isLobby: false
+      skillCharges: p1.skillCharges
     });
     renderer.renderDungeon(world.state, dt);
-    hud.renderDungeonHud(world.state);
+    hud.renderDungeonHud(world.state, nearGroundWpn, world.getExplorationProgress());
   }
 
   requestAnimationFrame(frame);
